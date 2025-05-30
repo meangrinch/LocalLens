@@ -1,0 +1,6 @@
+chromadb
+gradio
+numpy
+pillow
+sentencepiece
+transformers
