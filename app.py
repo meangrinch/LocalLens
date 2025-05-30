@@ -51,6 +51,8 @@ def generate_db_path_for_model(model_path_str: str) -> str:
 
 def read_indexed_folders(db_path: str) -> list[str]:
     """Reads the indexed_folders.txt file from the given db_path and returns a list of folder paths."""
+    if not db_path:
+        return []
     indexed_folders_file = os.path.join(db_path, "indexed_folders.txt")
     folders = []
     if os.path.exists(indexed_folders_file):
@@ -200,27 +202,22 @@ def handle_add_folder_button_click(
     progress=gr.Progress(track_tqdm=True),
 ):
     """Calls db_add_folders directly to add a new folder to the active DB."""
+    start_time = time.time()
     new_folder_stripped = new_folder_to_add.strip() if new_folder_to_add else ""
 
     if not new_folder_stripped:
         gr.Warning("Folder path cannot be empty.")
         return "\n".join(read_indexed_folders(current_db_path))
 
-    if not os.path.isdir(new_folder_stripped):
-        gr.Error(f"Folder not found or is not a directory: {new_folder_stripped}")
-        return "\n".join(read_indexed_folders(current_db_path))
-
     if not current_model_path or not current_db_path:
         gr.Warning("No active model or DB path. Please select a model first.")
         return "\n".join(read_indexed_folders(current_db_path))
 
-    if (
-        not active_model_state_val
-        or not active_processor_state_val
-        or not active_model_type_state_val
-        or not active_chroma_client_state_val
-    ):
-        gr.Warning("Model components (model, processor, type, or DB client) not loaded. Please re-select a model.")
+    if not os.path.isdir(new_folder_stripped):
+        print(f"Folder not found on disk: {os.path.abspath(new_folder_stripped)}")
+        end_time = time.time()
+        print(f"Add folder completed in {(end_time - start_time):.2f}s")
+        gr.Warning(f"Folder not found: {new_folder_stripped}")
         return "\n".join(read_indexed_folders(current_db_path))
 
     progress(0, desc="Adding folder to DB...")
@@ -243,6 +240,7 @@ def handle_add_folder_button_click(
         gr.Error(f"Failed to add folder '{os.path.basename(new_folder_stripped)}': {e}")
         progress(1, desc="Error.")
 
+    end_time = time.time()
     current_indexed_folders = read_indexed_folders(current_db_path)
     return "\n".join(current_indexed_folders)
 
@@ -261,7 +259,7 @@ def handle_delete_folder_button_click(
         return "\n".join(read_indexed_folders(current_db_path))
 
     if not current_db_path:
-        gr.Warning("No active DB path. Please select a model first (to establish DB path).")
+        gr.Warning("No active model or DB path. Please select a model first.")
         return "\n".join(read_indexed_folders(current_db_path))
 
     if not active_chroma_client_state_val:
@@ -271,12 +269,15 @@ def handle_delete_folder_button_click(
     progress(0, desc="Deleting folder from DB...")
 
     try:
-        db_delete_folder(
+        action_taken = db_delete_folder(
             folder_to_delete_str=folder_to_delete_stripped,
             db_path_str=current_db_path,
             collection_obj=active_chroma_client_state_val.get_collection("images"),
         )
-        gr.Info(f"Folder deleted successfully: {os.path.basename(folder_to_delete_stripped)}")
+        if action_taken:
+            gr.Info(f"Folder deleted successfully: {os.path.basename(folder_to_delete_stripped)}")
+        else:
+            gr.Warning(f"Folder not found: {os.path.basename(folder_to_delete_stripped)}")
         progress(1, desc="Delete folder completed.")
 
     except Exception as e:
@@ -428,7 +429,7 @@ custom_css = """
 
 if __name__ == "__main__":
     with gr.Blocks(theme=gr.themes.Default(primary_hue="purple"), css=custom_css, title="Where's My Pic?") as app:
-        gr.Markdown("# Where's My Pic?")
+        gr.Markdown("# Local Lens")
 
         active_model_path_state = gr.State(DEFAULT_MODEL_PATH)
         active_db_path_state = gr.State(None)

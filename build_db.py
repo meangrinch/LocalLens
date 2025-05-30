@@ -193,7 +193,7 @@ def db_add_folders(
     else:
         print("Folders already indexed")
     end_time = time.time()
-    print(f"Add folders completed in {(end_time - start_time):.2f}s")
+    print(f"Add folder completed in {(end_time - start_time):.2f}s")
 
 
 def db_update_indexed_folders(
@@ -230,9 +230,13 @@ def db_update_indexed_folders(
     print(f"Update completed in {(end_time - start_time):.2f}s")
 
 
-def db_delete_folder(folder_to_delete_str: str, db_path_str: str, collection_obj):
-    """Deletes a folder from the index file and removes its images from the database."""
+def db_delete_folder(folder_to_delete_str: str, db_path_str: str, collection_obj) -> bool:
+    """
+    Deletes a folder from the index file and removes its images from the database.
+    Returns True if any action was taken (folder removed from index or images deleted), False otherwise.
+    """
     start_time = time.time()
+    action_taken = False
     folder_to_delete_abs = os.path.abspath(folder_to_delete_str)
     indexed_folders_file_path = os.path.join(db_path_str, "indexed_folders.txt")
     ensure_file_exists(indexed_folders_file_path)
@@ -255,12 +259,11 @@ def db_delete_folder(folder_to_delete_str: str, db_path_str: str, collection_obj
         with open(indexed_folders_file_path, "w") as f:
             f.write("\n".join(final_folders_to_write))
         print(f"Removed folder from index: {os.path.basename(folder_to_delete_abs)}")
-    else:
-        print(f"Folder not found in index: {os.path.basename(folder_to_delete_abs)}")
+        action_taken = True
 
     # Remove images from ChromaDB
     if not os.path.isdir(folder_to_delete_abs):
-        print(f"Warning: Folder not found on disk: {folder_to_delete_abs}")
+        print(f"Folder not found on disk: {folder_to_delete_abs}")
     else:
         files_to_remove_from_db = []
         for root, _, files in os.walk(folder_to_delete_abs):
@@ -269,6 +272,7 @@ def db_delete_folder(folder_to_delete_str: str, db_path_str: str, collection_obj
                     files_to_remove_from_db.append(os.path.abspath(os.path.join(root, f_name)))
 
         if files_to_remove_from_db:
+            action_taken = True
             try:
                 collection_obj.delete(ids=files_to_remove_from_db)
                 print(f"Successfully removed {len(files_to_remove_from_db)} images from database")
@@ -276,8 +280,10 @@ def db_delete_folder(folder_to_delete_str: str, db_path_str: str, collection_obj
                 print(f"Error removing images from database: {e}")
         else:
             print("No images found to remove")
+
     end_time = time.time()
     print(f"Delete folder completed in {(end_time - start_time):.2f}s")
+    return action_taken
 
 
 def ensure_file_exists(filepath):
