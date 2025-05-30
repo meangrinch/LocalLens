@@ -199,10 +199,9 @@ def handle_add_folder_button_click(
     active_processor_state_val,
     active_model_type_state_val,
     active_chroma_client_state_val,
-    progress=gr.Progress(track_tqdm=True),
+    progress=gr.Progress(),
 ):
     """Calls db_add_folders directly to add a new folder to the active DB."""
-    start_time = time.time()
     new_folder_stripped = new_folder_to_add.strip() if new_folder_to_add else ""
 
     if not new_folder_stripped:
@@ -215,13 +214,41 @@ def handle_add_folder_button_click(
 
     if not os.path.isdir(new_folder_stripped):
         print(f"Folder not found on disk: {os.path.abspath(new_folder_stripped)}")
-        end_time = time.time()
-        print(f"Add folder completed in {(end_time - start_time):.2f}s")
         gr.Warning(f"Folder not found: {new_folder_stripped}")
         return "\n".join(read_indexed_folders(current_db_path))
 
-    progress(0, desc="Adding folder to DB...")
+    def update_gradio_progress(status, **kwargs):
+        if status == "start_processing":
+            total_images = kwargs.get("total_images_to_process", 0)
+            folders_being_processed = kwargs.get("folders_being_processed", [])
+            if folders_being_processed:
+                folder_names_str = ", ".join([os.path.basename(f) for f in folders_being_processed])
+            else:
+                folder_names_str = "selected folder(s)"
+            if total_images > 0:
+                progress(0, desc=f"Processing {total_images} images from {folder_names_str}...")
+            else:
+                progress(0, desc=f"No images to process in {folder_names_str}.")
+        elif status == "batch_processed":
+            current_batch = kwargs.get("current_batch_num", 0)
+            total_batches = kwargs.get("total_batches", 0)
+            images_in_batch = kwargs.get("images_in_batch", 0)
+            cumulative_processed = kwargs.get("cumulative_processed_this_run", 0)
+            total_images_to_process = kwargs.get("total_images_to_process", 1)
 
+            prog_fraction = cumulative_processed / total_images_to_process if total_images_to_process > 0 else 0
+            desc_str = (
+                f"Batch {current_batch}/{total_batches} ({images_in_batch} images). "
+                f"Total: {cumulative_processed}/{total_images_to_process}"
+            )
+            progress(prog_fraction, desc=desc_str)
+        elif status == "all_batches_done":
+            total_added = kwargs.get("total_successfully_added", 0)
+            progress(1, desc=f"Successfully processed {total_added} images.")
+        elif status == "add_folder_completed":
+            duration = kwargs.get("duration_seconds", 0)
+            gr.Info(f"Folder '{os.path.basename(new_folder_stripped)}' processed in {duration:.2f}s.")
+            progress(1, desc=f"Add folder completed in {duration:.2f}s.")
     try:
         db_add_folders(
             folders_to_process=[new_folder_stripped],
@@ -231,16 +258,14 @@ def handle_add_folder_button_click(
             processor_obj=active_processor_state_val,
             device_str=device,
             model_type_str=active_model_type_state_val,
+            progress_callback=update_gradio_progress,
         )
-        gr.Info(f"Folder added successfully: {os.path.basename(new_folder_stripped)}")
-        progress(1, desc="Add folder completed.")
 
     except Exception as e:
         print(f"Error adding folder: {e}")
         gr.Error(f"Failed to add folder '{os.path.basename(new_folder_stripped)}': {e}")
-        progress(1, desc="Error.")
+        progress(1, desc="Error adding folder.")
 
-    end_time = time.time()
     current_indexed_folders = read_indexed_folders(current_db_path)
     return "\n".join(current_indexed_folders)
 

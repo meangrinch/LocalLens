@@ -40,6 +40,7 @@ def process_images(
     processor_param=None,
     device_param_ext=None,
     model_type_param_ext=None,
+    progress_callback=None,
 ):
     if mode == "add":
         print(f"Adding folders: {', '.join(folders)}")
@@ -56,11 +57,24 @@ def process_images(
 
         if not all_files_to_add:
             print("No image files found to add")
+            if progress_callback:
+                progress_callback(status="start_processing", folders_being_processed=folders, total_images_to_process=0)
+                progress_callback(status="all_batches_done", total_successfully_added=0)
         else:
             print(f"Processing {len(all_files_to_add)} images...")
+            if progress_callback:
+                progress_callback(
+                    status="start_processing",
+                    folders_being_processed=folders,
+                    total_images_to_process=len(all_files_to_add),
+                )
+
             batch_size = 128
             processed_count = 0
+            total_batches = (len(all_files_to_add) + batch_size - 1) // batch_size if all_files_to_add else 0
+            current_batch_num = 0
             for i in range(0, len(all_files_to_add), batch_size):
+                current_batch_num += 1
                 batch_files = all_files_to_add[i: i + batch_size]
                 try:
                     batch_embeddings, processed_files = extract_features_clip(
@@ -77,12 +91,28 @@ def process_images(
                             ids=processed_files,
                         )
                         processed_count += len(processed_files)
+                        print(f"Batch {current_batch_num}/{total_batches}: {len(processed_files)} images done.")
+                        if progress_callback:
+                            progress_callback(
+                                status="batch_processed",
+                                current_batch_num=current_batch_num,
+                                total_batches=total_batches,
+                                images_in_batch=len(processed_files),
+                                cumulative_processed_this_run=processed_count,
+                                total_images_to_process=len(all_files_to_add),
+                            )
                     elif batch_files:
                         print(f"Batch failed: {len(batch_files)} files could not be processed")
                 except Exception as e:
                     print(f"Error processing batch: {e}")
             if processed_count > 0:
                 print(f"Successfully added {processed_count} images")
+                if progress_callback:
+                    progress_callback(status="all_batches_done", total_successfully_added=processed_count)
+            elif not all_files_to_add and progress_callback:
+                progress_callback(status="all_batches_done", total_successfully_added=0)
+            elif progress_callback:
+                progress_callback(status="all_batches_done", total_successfully_added=processed_count)
 
     elif mode == "update":
         print("Updating database...")
@@ -126,7 +156,10 @@ def process_images(
             print(f"Adding {len(files_to_add)} new images...")
             add_batch_size = 128
             processed_count = 0
+            total_batches = (len(files_to_add) + add_batch_size - 1) // add_batch_size if files_to_add else 0
+            current_batch_num = 0
             for i in range(0, len(files_to_add), add_batch_size):
+                current_batch_num += 1
                 batch_add_files = files_to_add[i: i + add_batch_size]
                 try:
                     batch_embeddings, processed_files = extract_features_clip(
@@ -143,6 +176,7 @@ def process_images(
                             ids=processed_files,
                         )
                         processed_count += len(processed_files)
+                        print(f"Batch {current_batch_num}/{total_batches}: {len(processed_files)} images done.")
                     elif batch_add_files:
                         print(f"Batch failed: {len(batch_add_files)} files could not be processed")
                 except Exception as e:
@@ -161,6 +195,7 @@ def db_add_folders(
     processor_obj,
     device_str: str,
     model_type_str: str,
+    progress_callback=None,
 ):
     """Adds specified folders to the database and updates the index file."""
     start_time = time.time()
@@ -182,6 +217,7 @@ def db_add_folders(
         processor_param=processor_obj,
         device_param_ext=device_str,
         model_type_param_ext=model_type_str,
+        progress_callback=progress_callback,
     )
 
     if folders_to_actually_add_to_txt:
@@ -194,6 +230,8 @@ def db_add_folders(
         print("Folders already indexed")
     end_time = time.time()
     print(f"Add folder completed in {(end_time - start_time):.2f}s")
+    if progress_callback:
+        progress_callback(status="add_folder_completed", duration_seconds=(end_time - start_time))
 
 
 def db_update_indexed_folders(
