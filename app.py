@@ -10,6 +10,8 @@ from PIL import Image
 from model_utils import load_model_and_processor
 from build_db import db_add_folders, db_update_indexed_folders, db_delete_folder
 
+__version__ = "1.0.0"
+
 # --- Configuration ---
 AVAILABLE_MODELS = ["google/siglip2-so400m-patch16-512", "openai/clip-vit-large-patch14"]
 DEFAULT_MODEL_PATH = None
