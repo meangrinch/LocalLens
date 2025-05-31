@@ -41,6 +41,7 @@ def process_images(
     device_param_ext=None,
     model_type_param_ext=None,
     progress_callback=None,
+    batch_size_param=128,
 ):
     if mode == "add":
         print(f"Adding folders: {', '.join(folders)}")
@@ -69,7 +70,7 @@ def process_images(
                     total_images_to_process=len(all_files_to_add),
                 )
 
-            batch_size = 128
+            batch_size = batch_size_param
             processed_count = 0
             total_batches = (len(all_files_to_add) + batch_size - 1) // batch_size if all_files_to_add else 0
             current_batch_num = 0
@@ -154,7 +155,7 @@ def process_images(
 
         if files_to_add:
             print(f"Adding {len(files_to_add)} new images...")
-            add_batch_size = 128
+            add_batch_size = batch_size_param
             processed_count = 0
             total_batches = (len(files_to_add) + add_batch_size - 1) // add_batch_size if files_to_add else 0
             current_batch_num = 0
@@ -195,6 +196,7 @@ def db_add_folders(
     processor_obj,
     device_str: str,
     model_type_str: str,
+    batch_size: int,
     progress_callback=None,
 ):
     """Adds specified folders to the database and updates the index file."""
@@ -218,6 +220,7 @@ def db_add_folders(
         device_param_ext=device_str,
         model_type_param_ext=model_type_str,
         progress_callback=progress_callback,
+        batch_size_param=batch_size,
     )
 
     if folders_to_actually_add_to_txt:
@@ -241,6 +244,7 @@ def db_update_indexed_folders(
     processor_obj,
     device_str: str,
     model_type_str: str,
+    batch_size: int,
 ):
     """Updates the database by rescanning folders listed in the index file."""
     start_time = time.time()
@@ -259,6 +263,7 @@ def db_update_indexed_folders(
                 processor_param=processor_obj,
                 device_param_ext=device_str,
                 model_type_param_ext=model_type_str,
+                batch_size_param=batch_size,
             )
         else:
             print("No folders in index file to update")
@@ -343,6 +348,7 @@ if __name__ == "__main__":
     parser.add_argument("--add", nargs="+", help="Folders to add to the database. Creates DB if not exists.")
     parser.add_argument("--update", action="store_true", help="Update existing database by rescanning indexed folders.")
     parser.add_argument("--delete_folder", type=str, help="Folder path to remove from the index and database.")
+    parser.add_argument("--batch_size", type=int, default=128, help="Batch size for adding images.")
     args = parser.parse_args()
 
     os.makedirs(args.db_path, exist_ok=True)
@@ -373,7 +379,8 @@ if __name__ == "__main__":
             model_obj=model,
             processor_obj=processor,
             device_str=device,
-            model_type_str=model_type
+            model_type_str=model_type,
+            batch_size=args.batch_size
         )
     elif args.update:
         db_update_indexed_folders(
@@ -382,7 +389,8 @@ if __name__ == "__main__":
             model_obj=model,
             processor_obj=processor,
             device_str=device,
-            model_type_str=model_type
+            model_type_str=model_type,
+            batch_size=args.batch_size
         )
     elif args.delete_folder:
         db_delete_folder(

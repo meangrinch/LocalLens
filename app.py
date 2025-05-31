@@ -154,6 +154,7 @@ def handle_update_sync_button_click(
     active_processor_state_val,
     active_model_type_state_val,
     active_chroma_client_state_val,
+    batch_size_ui: int,
     progress=gr.Progress(track_tqdm=True),
 ):
     """Calls db_update_indexed_folders directly to update/sync the active database."""
@@ -181,6 +182,7 @@ def handle_update_sync_button_click(
             processor_obj=active_processor_state_val,
             device_str=device,
             model_type_str=active_model_type_state_val,
+            batch_size=batch_size_ui,
         )
         gr.Info(f"Database '{current_db_path}' update process completed successfully.")
         progress(1, desc="DB updated.")
@@ -199,6 +201,7 @@ def handle_add_folder_button_click(
     active_processor_state_val,
     active_model_type_state_val,
     active_chroma_client_state_val,
+    batch_size_ui: int,
     progress=gr.Progress(),
 ):
     """Calls db_add_folders directly to add a new folder to the active DB."""
@@ -258,6 +261,7 @@ def handle_add_folder_button_click(
             processor_obj=active_processor_state_val,
             device_str=device,
             model_type_str=active_model_type_state_val,
+            batch_size=batch_size_ui,
             progress_callback=update_gradio_progress,
         )
 
@@ -453,7 +457,7 @@ custom_css = """
 """
 
 if __name__ == "__main__":
-    with gr.Blocks(theme=gr.themes.Default(primary_hue="purple"), css=custom_css, title="Where's My Pic?") as app:
+    with gr.Blocks(theme=gr.themes.Default(primary_hue="purple"), css=custom_css, title="Local Lens") as app:
         gr.Markdown("# Local Lens")
 
         active_model_path_state = gr.State(DEFAULT_MODEL_PATH)
@@ -500,14 +504,15 @@ if __name__ == "__main__":
                     add_folder_button = gr.Button("Add Folder", min_width=50)
                     delete_folder_button = gr.Button("Delete Folder", variant="stop", min_width=50)
 
-                gr.Markdown("### Search Parameters")
-                with gr.Accordion("Search Parameters", open=False):
+                gr.Markdown("### Advanced Parameters")
+                with gr.Accordion("Advanced Parameters", open=False):
                     initial_n_results_slider = gr.Slider(
                         minimum=1,
                         maximum=200,
                         step=1,
                         value=INITIAL_N_RESULTS,
-                        label="Initial N Results (Max Images to Fetch)",
+                        label="Initial N Results (Max Images)",
+                        info="Max images to fetch from DB before applying confidence thresholds.",
                     )
                     siglip_thresh_slider = gr.Slider(
                         minimum=-20.0,
@@ -515,6 +520,7 @@ if __name__ == "__main__":
                         step=0.1,
                         value=SIGLIP_LOGIT_CONFIDENCE_THRESHOLD,
                         label="Logit Confidence Threshold (SigLIP)",
+                        info="SigLIP model confidence. Higher values = more confident.",
                     )
                     clip_thresh_slider = gr.Slider(
                         minimum=0.0,
@@ -522,6 +528,15 @@ if __name__ == "__main__":
                         step=0.1,
                         value=CLIP_LOGIT_CONFIDENCE_THRESHOLD,
                         label="Logit Confidence Threshold (CLIP)",
+                        info="CLIP model confidence. Higher values = more confident.",
+                    )
+                    batch_size_slider = gr.Slider(
+                        minimum=16,
+                        maximum=256,
+                        step=16,
+                        value=128,
+                        label="Processing Batch Size",
+                        info="Images to process in one batch during add/update."
                     )
 
             # Right Column: Gallery
@@ -565,6 +580,7 @@ if __name__ == "__main__":
                 processor_state,
                 model_type_state,
                 chroma_client_state,
+                batch_size_slider,
             ],
             outputs=[],
             show_progress="full",
@@ -580,6 +596,7 @@ if __name__ == "__main__":
                 processor_state,
                 model_type_state,
                 chroma_client_state,
+                batch_size_slider,
             ],
             outputs=[indexed_folders_display],
             show_progress="full",
@@ -597,7 +614,7 @@ if __name__ == "__main__":
             initial_n_results_slider,
             siglip_thresh_slider,
             clip_thresh_slider,
-            active_model_path_state,  # For context if needed by search (e.g. logging)
+            active_model_path_state,
             model_state,
             processor_state,
             model_type_state,
