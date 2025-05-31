@@ -71,6 +71,10 @@ Navigate to the `LocalLens` directory and run:
 git pull
 ```
 
+## Customization
+
+Enter a custom CLIP/SigLIP2 model name (Hugging Face ID). Must contain the word "clip" or "siglip" in its name.
+
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
