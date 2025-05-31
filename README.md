@@ -77,7 +77,7 @@ Apache-2.0. See [LICENSE](LICENSE).
 
 ## Credits
 
-Inspired by [Where's My Pic?](https://github.com/Om-Alve/Wheres_My_Pic) by @Om-Alve.
+Inspired by [Where's My Pic?](https://github.com/Om-Alve/Wheres_My_Pic) by [@Om-Alve](https://github.com/Om-Alve).
 
 ## Author
 
