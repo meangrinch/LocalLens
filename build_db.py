@@ -338,17 +338,17 @@ def ensure_file_exists(filepath):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Index image folders for a specific model and database.")
     parser.add_argument(
-        "--model_path", required=True, help="Path to the model (e.g., 'google/siglip2-so400m-patch16-512')"
+        "--model_path", required=True, help="Hugging face identifier (e.g., 'google/siglip2-so400m-patch16-512')"
     )
     parser.add_argument(
         "--db_path",
         required=True,
-        help="Path to the ChromaDB directory for this model (e.g., 'img_db_google_siglip2_so400m_patch16_512/')",
+        help="Path to the ChromaDB directory for this model (e.g., 'img_db/siglip2_so400m')",
     )
     parser.add_argument("--add", nargs="+", help="Folders to add to the database. Creates DB if not exists.")
     parser.add_argument("--update", action="store_true", help="Update existing database by rescanning indexed folders.")
     parser.add_argument("--delete_folder", type=str, help="Folder path to remove from the index and database.")
-    parser.add_argument("--batch_size", type=int, default=128, help="Batch size for adding images.")
+    parser.add_argument("--batch_size", type=int, default=96, help="Batch size for adding images to DB.")
     args = parser.parse_args()
 
     os.makedirs(args.db_path, exist_ok=True)
