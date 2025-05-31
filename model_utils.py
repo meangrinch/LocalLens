@@ -1,3 +1,6 @@
+import os
+from concurrent.futures import ThreadPoolExecutor
+
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -33,6 +36,28 @@ def load_model_and_processor(model_path: str, device: str, dtype: torch.dtype):
     return model, processor, model_type
 
 
+def _load_and_convert_image(path: str) -> tuple[Image.Image | None, str | None, str | None]:
+    """
+    Helper function to load and convert a single image.
+    Returns (PIL_Image_or_None, path_if_successful_or_None, error_message_or_None)
+    """
+    try:
+        img = Image.open(path).convert("RGB")
+        return img, path, None
+    except FileNotFoundError:
+        return None, None, f"Warning: File not found during feature extraction: {path}. Skipping."
+    except UnidentifiedImageError:
+        return (
+            None,
+            None,
+            f"Warning: Cannot identify image file (possibly corrupted or not an image): {path}. Skipping.",
+        )
+    except IOError as e:
+        return None, None, f"Warning: IOError opening image {path}: {e}. Skipping."
+    except Exception as e:
+        return None, None, f"Warning: An unexpected error occurred opening image {path}: {e}. Skipping."
+
+
 def extract_features(image_paths_batch: list[str], model, processor, device: str, model_type: str):
     """
     Extracts features for a batch of image paths using the provided model and processor.
@@ -42,22 +67,20 @@ def extract_features(image_paths_batch: list[str], model, processor, device: str
     valid_images_pil = []
     valid_paths = []
 
-    for path in image_paths_batch:
-        try:
-            img = Image.open(path).convert("RGB")
-            valid_images_pil.append(img)
-            valid_paths.append(path)
-        except FileNotFoundError:
-            print(f"Warning: File not found during feature extraction: {path}. Skipping.")
-        except UnidentifiedImageError:
-            print(f"Warning: Cannot identify image file (possibly corrupted or not an image): {path}. Skipping.")
-        except IOError as e:
-            print(f"Warning: IOError opening image {path}: {e}. Skipping.")
-        except Exception as e:
-            print(f"Warning: An unexpected error occurred opening image {path}: {e}. Skipping.")
+    num_workers = os.cpu_count()
+
+    with ThreadPoolExecutor(max_workers=num_workers) as executor:
+        results = list(executor.map(_load_and_convert_image, image_paths_batch))
+
+    for img_pil, successful_path, error_msg in results:
+        if img_pil and successful_path:
+            valid_images_pil.append(img_pil)
+            valid_paths.append(successful_path)
+        elif error_msg:
+            print(error_msg)
 
     if not valid_images_pil:
-        return [], []
+        return np.array([]).astype(np.float16 if device == "cuda" else np.float32), []
 
     with torch.no_grad():
         inputs = processor(images=valid_images_pil, return_tensors="pt").to(device)
