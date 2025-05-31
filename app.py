@@ -17,7 +17,7 @@ DEFAULT_MODEL_PATH = None
 device = "cuda" if torch.cuda.is_available() else "cpu"
 dtype = torch.float16 if device == "cuda" else torch.float32
 
-INITIAL_N_RESULTS = 30  # Number of results to fetch from ChromaDB before applying threshold
+INITIAL_N_RESULTS = 50  # Number of results to fetch from ChromaDB before filtering by confidence
 SIGLIP_LOGIT_CONFIDENCE_THRESHOLD = -8.0  # Higher = more confident
 CLIP_LOGIT_CONFIDENCE_THRESHOLD = 17.0  # Higher = more confident
 
@@ -387,51 +387,61 @@ def search(
         candidates_count = len(query_results["documents"][0])
         print(f"Processing {candidates_count} candidates from DB")
 
-        for doc_path, emb_list, _ in zip(
-            query_results["documents"][0], query_results["embeddings"][0], query_results["distances"][0]
-        ):
-            passes_threshold = False
-            logit_val_for_print = 0
+        img_embeddings_list = query_results["embeddings"][0]
+        all_img_embeddings_tensor = torch.tensor(img_embeddings_list, dtype=torch.float32).to(device)
 
-            if current_model_type == "siglip":
-                img_emb_candidate_float32 = torch.tensor(emb_list, dtype=torch.float32).to(device)
-                cos_sim = F.cosine_similarity(
-                    text_emb_normalized_float32.squeeze(0), img_emb_candidate_float32, dim=0
-                ).item()
-                if current_logit_scale_exp_val is not None and current_logit_bias_val is not None:
-                    siglip_logit = (cos_sim * current_logit_scale_exp_val) + current_logit_bias_val
-                    if siglip_logit > logit_thresh_ui:
-                        passes_threshold = True
-                    logit_val_for_print = siglip_logit
-                else:
-                    print("Warning: SigLIP logit scale/bias unavailable for model {active_model_path}")
+        batch_cos_sim = F.cosine_similarity(
+            text_emb_normalized_float32.squeeze(0),
+            all_img_embeddings_tensor,
+            dim=-1
+        )
 
-            elif current_model_type == "clip":
-                img_emb_candidate_float32 = torch.tensor(emb_list, dtype=torch.float32).to(device)
-                cos_sim = F.cosine_similarity(
-                    text_emb_normalized_float32.squeeze(0), img_emb_candidate_float32, dim=0
-                ).item()
-                if current_logit_scale_exp_val is not None:
-                    clip_scaled_logit = cos_sim * current_logit_scale_exp_val
-                    if clip_scaled_logit > clip_logit_thresh_ui:
-                        passes_threshold = True
-                    logit_val_for_print = clip_scaled_logit
-                else:
-                    print(f"Warning: CLIP logit scale unavailable for model {active_model_path}")
+        batch_logit_val_for_print = torch.zeros_like(batch_cos_sim)
+        passes_threshold_mask = torch.zeros_like(batch_cos_sim, dtype=torch.bool)
 
-            if passes_threshold:
-                try:
-                    img = Image.open(doc_path)
-                    gallery_images.append((img, doc_path))
-                    if verbose:
-                        print(f"✓ {doc_path} (cos: {cos_sim:.4f}, logit: {logit_val_for_print:.4f})")
-                except FileNotFoundError:
-                    print(f"Missing: {doc_path}")
-                except Exception as e:
-                    print(f"Error opening {doc_path}: {e}")
+        if current_model_type == "siglip":
+            if current_logit_scale_exp_val is not None and current_logit_bias_val is not None:
+                batch_logit_val_for_print = (batch_cos_sim * current_logit_scale_exp_val) + current_logit_bias_val
+                passes_threshold_mask = batch_logit_val_for_print > logit_thresh_ui
             else:
-                if verbose:
-                    print(f"✗ {doc_path} (cos: {cos_sim:.4f}, logit: {logit_val_for_print:.4f})")
+                print(f"Warning: SigLIP logit scale/bias unavailable for model {active_model_path}")
+                passes_threshold_mask = torch.zeros_like(batch_cos_sim, dtype=torch.bool)
+        elif current_model_type == "clip":
+            if current_logit_scale_exp_val is not None:
+                batch_logit_val_for_print = batch_cos_sim * current_logit_scale_exp_val
+                passes_threshold_mask = batch_logit_val_for_print > clip_logit_thresh_ui
+            else:
+                print(f"Warning: CLIP logit scale unavailable for model {active_model_path}")
+                passes_threshold_mask = torch.zeros_like(batch_cos_sim, dtype=torch.bool)
+
+        doc_paths_all = query_results["documents"][0]
+        passing_indices = torch.where(passes_threshold_mask)[0]
+
+        for idx_tensor in passing_indices:
+            idx = idx_tensor.item()
+            doc_path = doc_paths_all[idx]
+            try:
+                img = Image.open(doc_path)
+                gallery_images.append((img, doc_path))
+            except FileNotFoundError:
+                print(f"Missing: {doc_path}")
+            except Exception as e:
+                print(f"Error opening {doc_path}: {e}")
+
+        if verbose:
+            for i in range(candidates_count):
+                doc_path = doc_paths_all[i]
+                cos_sim_val = batch_cos_sim[i].item()
+                logit_val = batch_logit_val_for_print[i].item()
+                # Calculate sigmoid score for logging
+                sigmoid_val = torch.sigmoid(torch.tensor(logit_val, device=device)).item()
+
+                status_char = "✓" if passes_threshold_mask[i].item() else "✗"
+                log_details = (
+                    f"(cos: {cos_sim_val:.4f}, logit: {logit_val:.4f}, "
+                    f"sigmoid: {sigmoid_val:.4f})"
+                )
+                print(f"{status_char} {doc_path} {log_details}")
 
     result_count = len(gallery_images)
     if result_count == 0:
@@ -508,11 +518,11 @@ if __name__ == "__main__":
                 with gr.Accordion("Advanced Parameters", open=False):
                     initial_n_results_slider = gr.Slider(
                         minimum=1,
-                        maximum=200,
+                        maximum=500,
                         step=1,
                         value=INITIAL_N_RESULTS,
                         label="Initial N Results (Max Images)",
-                        info="Max images to fetch from DB before applying confidence thresholds.",
+                        info="Images to fetch from DB before applying confidence thresholds.",
                     )
                     siglip_thresh_slider = gr.Slider(
                         minimum=-20.0,
@@ -531,12 +541,12 @@ if __name__ == "__main__":
                         info="CLIP model confidence. Higher values = more confident.",
                     )
                     batch_size_slider = gr.Slider(
-                        minimum=16,
+                        minimum=8,
                         maximum=256,
-                        step=16,
-                        value=128,
+                        step=8,
+                        value=96,
                         label="Processing Batch Size",
-                        info="Images to process in one batch during add/update."
+                        info="Images to process in one batch during add/update. Higher = more memory usage.",
                     )
 
             # Right Column: Gallery
