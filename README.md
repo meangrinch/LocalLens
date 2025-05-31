@@ -17,14 +17,14 @@ A local image search engine powered by CLIP/SigLIP. Search for images in your lo
 
 ### Windows Portable
 
-Download the standalone zip (NVIDIA GPU or CPU) from the [releases page](https://github.com/meangrinch/Local_Lens/releases). 
+Download the standalone zip (NVIDIA GPU or CPU) from the [releases page](https://github.com/meangrinch/LocalLens/releases). 
 
 ### Manual Installation
 
 1.  **Clone Repository:**
     ```bash
     git clone https://github.com/meangrinch/LocalLens.git
-    cd Wheres_My_Pic
+    cd LocalLens
     ```
 
 2. **Create Virtual Environment (Recommended):**
