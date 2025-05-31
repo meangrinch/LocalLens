@@ -37,7 +37,7 @@ def get_simplified_model_identifier(model_path_str: str) -> str:
         return model_name_part
     elif "clip" in model_name_part:
         sub_parts = model_name_part.split("-")
-        if len(sub_parts) >= 2:
+        if len(sub_parts) >= 3:
             return f"{sub_parts[0]}-{sub_parts[1]}-{sub_parts[2]}"  # "clip-vit-large"
         return model_name_part
     return model_name_part.replace("-", "_").replace(".", "_")
@@ -77,7 +77,7 @@ def load_and_switch_model_db(selected_model_path: str, progress=gr.Progress(trac
             None,
             None,
             None,
-            "No model selected. Please choose a model from the dropdown.",  # indexed_folders_display
+            "No model selected. Please choose a model from the dropdown.",
         )
     progress(0, desc="Starting model...")
 
