@@ -369,7 +369,7 @@ def search(
 
     try:
         query_results = collection.query(
-            query_embeddings=text_emb_normalized_float32.cpu().squeeze(0).tolist(),
+            query_embeddings=text_emb_normalized_float32.cpu().squeeze(0).numpy(),
             n_results=int(initial_n_results_ui),
             include=["documents", "embeddings", "distances"],
         )

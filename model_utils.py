@@ -73,4 +73,4 @@ def extract_features(image_paths_batch: list[str], model, processor, device: str
         else:
             features_np = features_np.astype(np.float32)
 
-    return features_np.tolist(), valid_paths
+    return features_np, valid_paths
