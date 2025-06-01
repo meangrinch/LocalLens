@@ -500,6 +500,7 @@ if __name__ == "__main__":
                     choices=AVAILABLE_MODELS,
                     value=None,
                     label="Select Model",
+                    allow_custom_value=True,
                 )
 
                 gr.Markdown("#### Indexed Folders for Active DB")
