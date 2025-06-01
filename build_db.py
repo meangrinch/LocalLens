@@ -338,7 +338,7 @@ def ensure_file_exists(filepath):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Index image folders for a specific model and database.")
     parser.add_argument(
-        "--model_path", required=True, help="Hugging face identifier (e.g., 'google/siglip2-so400m-patch16-512')"
+        "--model_path", required=True, help="Hugging Face ID or local path (e.g., 'google/siglip2-so400m-patch16-512')"
     )
     parser.add_argument(
         "--db_path",
