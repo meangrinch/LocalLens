@@ -22,7 +22,7 @@ DEFAULT_MODEL_PATH = None
 
 INITIAL_N_RESULTS = 50  # Number of results to fetch from ChromaDB before filtering by confidence
 SIGLIP_LOGIT_CONFIDENCE_THRESHOLD = -6.0  # Higher = more confident
-CLIP_LOGIT_CONFIDENCE_THRESHOLD = 18.0  # Higher = more confident
+CLIP_LOGIT_CONFIDENCE_THRESHOLD = 19.0  # Higher = more confident
 
 verbose = False  # For detailed confidence logging
 
@@ -466,14 +466,48 @@ def clear_search_and_gallery():
     return "", []
 
 
-custom_css = """
+css_gallary = """
 #gallery .grid-wrap {
     max-height: 900px !important;
 }
 """
 
+js_credits = """
+function() {
+    const footer = document.querySelector('footer');
+    if (footer) {
+        // Check if credits already exist
+        if (footer.parentNode.querySelector('.locallens-credits')) {
+            return;
+        }
+        const newContent = document.createElement('div');
+        newContent.className = 'locallens-credits'; // Add a class for identification
+        newContent.innerHTML = 'Made by <a href="https://github.com/meangrinch">grinnch</a> with ❤️'; // credits
+
+        newContent.style.textAlign = 'center';
+        newContent.style.paddingTop = '50px';
+        newContent.style.color = 'lightgray';
+
+        // Style the hyperlink
+        const link = newContent.querySelector('a');
+        if (link) {
+            link.style.color = 'gray';
+            link.style.textDecoration = 'underline';
+        }
+
+        footer.parentNode.insertBefore(newContent, footer);
+    }
+}
+"""
+
 if __name__ == "__main__":
-    with gr.Blocks(theme=gr.themes.Default(primary_hue="purple"), css=custom_css, title="Local Lens") as app:
+    with gr.Blocks(
+        theme=gr.themes.Default(primary_hue="purple"),
+        js=js_credits,
+        css=css_gallary,
+        title="Local Lens"
+    ) as app:
+
         gr.Markdown("# Local Lens")
 
         active_model_path_state = gr.State(DEFAULT_MODEL_PATH)
@@ -534,7 +568,7 @@ if __name__ == "__main__":
                     siglip_thresh_slider = gr.Slider(
                         minimum=-15.0,
                         maximum=15.0,
-                        step=0.1,
+                        step=0.5,
                         value=SIGLIP_LOGIT_CONFIDENCE_THRESHOLD,
                         label="Logit Confidence Threshold (SigLIP)",
                         info="SigLIP model confidence. Higher values = more confident.",
@@ -542,7 +576,7 @@ if __name__ == "__main__":
                     clip_thresh_slider = gr.Slider(
                         minimum=0.0,
                         maximum=40.0,
-                        step=0.1,
+                        step=0.5,
                         value=CLIP_LOGIT_CONFIDENCE_THRESHOLD,
                         label="Logit Confidence Threshold (CLIP)",
                         info="CLIP model confidence. Higher values = more confident.",
