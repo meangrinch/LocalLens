@@ -13,17 +13,21 @@ from build_db import db_add_folders, db_update_indexed_folders, db_delete_folder
 __version__ = "1.0.0"
 
 # --- Configuration ---
-AVAILABLE_MODELS = ["google/siglip2-so400m-patch16-512", "openai/clip-vit-large-patch14"]
+AVAILABLE_MODELS = [
+    "google/siglip2-so400m-patch16-512",
+    "openai/clip-vit-large-patch14",
+    "laion/CLIP-ViT-H-14-laion2B-s32B-b79K"
+]
 DEFAULT_MODEL_PATH = None
+
+INITIAL_N_RESULTS = 50  # Number of results to fetch from ChromaDB before filtering by confidence
+SIGLIP_LOGIT_CONFIDENCE_THRESHOLD = -6.0  # Higher = more confident
+CLIP_LOGIT_CONFIDENCE_THRESHOLD = 18.0  # Higher = more confident
+
+verbose = False  # For detailed confidence logging
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 dtype = torch.float16 if device == "cuda" else torch.float32
-
-INITIAL_N_RESULTS = 50  # Number of results to fetch from ChromaDB before filtering by confidence
-SIGLIP_LOGIT_CONFIDENCE_THRESHOLD = -8.0  # Higher = more confident
-CLIP_LOGIT_CONFIDENCE_THRESHOLD = 17.0  # Higher = more confident
-
-verbose = False  # Set to True for detailed confidence logging
 
 
 def get_simplified_model_identifier(model_path_str: str) -> str:
@@ -528,8 +532,8 @@ if __name__ == "__main__":
                         info="Images to fetch from DB before applying confidence thresholds.",
                     )
                     siglip_thresh_slider = gr.Slider(
-                        minimum=-20.0,
-                        maximum=0.0,
+                        minimum=-15.0,
+                        maximum=15.0,
                         step=0.1,
                         value=SIGLIP_LOGIT_CONFIDENCE_THRESHOLD,
                         label="Logit Confidence Threshold (SigLIP)",
@@ -537,7 +541,7 @@ if __name__ == "__main__":
                     )
                     clip_thresh_slider = gr.Slider(
                         minimum=0.0,
-                        maximum=30.0,
+                        maximum=40.0,
                         step=0.1,
                         value=CLIP_LOGIT_CONFIDENCE_THRESHOLD,
                         label="Logit Confidence Threshold (CLIP)",
@@ -547,7 +551,7 @@ if __name__ == "__main__":
                         minimum=8,
                         maximum=256,
                         step=8,
-                        value=96,
+                        value=64,
                         label="Processing Batch Size",
                         info="Images to process in one batch during add/update. Higher = more memory usage.",
                     )
