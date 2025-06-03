@@ -10,19 +10,27 @@ from PIL import Image
 from model_utils import load_model_and_processor
 from build_db import db_add_folders, db_update_indexed_folders, db_delete_folder
 
-__version__ = "1.0.1"
+__version__ = "1.1.0"
 
 # --- Configuration ---
 AVAILABLE_MODELS = [
     "google/siglip2-so400m-patch16-512",
     "openai/clip-vit-large-patch14",
-    "laion/CLIP-ViT-H-14-laion2B-s32B-b79K"
+    "laion/CLIP-ViT-H-14-laion2B-s32B-b79K",
 ]
 DEFAULT_MODEL_PATH = None
 
-INITIAL_N_RESULTS = 50  # Number of results to fetch from ChromaDB before filtering by confidence
-SIGLIP_LOGIT_CONFIDENCE_THRESHOLD = -6.0  # Higher = more confident
-CLIP_LOGIT_CONFIDENCE_THRESHOLD = 19.0  # Higher = more confident
+INITIAL_N_RESULTS = 50  # Number of results to fetch from ChromaDB before filtering
+
+FALLBACK_SIGLIP_THRESHOLD = -4.0
+FALLBACK_CLIP_THRESHOLD = 20.0
+FALLBACK_COMBINED_THRESHOLD = 0.45
+FALLBACK_IMAGE_ONLY_THRESHOLD = 0.70
+MODEL_CONFIDENCE_DEFAULTS = {
+    "google/siglip2-so400m-patch16-512": {"siglip_thresh": -4.0, "combined_thresh": 0.50, "image_only_thresh": 0.85},
+    "openai/clip-vit-large-patch14": {"clip_thresh": 20.0, "combined_thresh": 0.45, "image_only_thresh": 0.70},
+    "laion/CLIP-ViT-H-14-laion2B-s32B-b79K": {"clip_thresh": 25.0, "combined_thresh": 0.45, "image_only_thresh": 0.70},
+}
 
 verbose = False  # For detailed confidence logging
 
@@ -83,9 +91,18 @@ def load_and_switch_model_db(selected_model_path: str, progress=gr.Progress(trac
             None,
             None,
             None,
-            "No model selected. Please choose a model from the dropdown.",
+            "No model selected. Please choose a model from the dropdown.",  # indexed_folders_display
+            FALLBACK_SIGLIP_THRESHOLD,
+            FALLBACK_CLIP_THRESHOLD,
+            FALLBACK_COMBINED_THRESHOLD,
+            FALLBACK_IMAGE_ONLY_THRESHOLD,
         )
     progress(0, desc="Starting model...")
+
+    ui_siglip_thresh_to_set = FALLBACK_SIGLIP_THRESHOLD
+    ui_clip_thresh_to_set = FALLBACK_CLIP_THRESHOLD
+    ui_combined_thresh_to_set = FALLBACK_COMBINED_THRESHOLD
+    ui_image_only_thresh_to_set = FALLBACK_IMAGE_ONLY_THRESHOLD
 
     new_db_path = generate_db_path_for_model(selected_model_path)
     progress(0.1, desc=f"DB path: {new_db_path}")
@@ -112,6 +129,15 @@ def load_and_switch_model_db(selected_model_path: str, progress=gr.Progress(trac
 
         new_logit_scale_exp_val = new_model.logit_scale.exp().item() if hasattr(new_model, "logit_scale") else None
         new_logit_bias_val = new_model.logit_bias.item() if hasattr(new_model, "logit_bias") else None
+
+        model_specific_conf = MODEL_CONFIDENCE_DEFAULTS.get(selected_model_path, {})
+        if new_model_type == "siglip":
+            ui_siglip_thresh_to_set = model_specific_conf.get("siglip_thresh", FALLBACK_SIGLIP_THRESHOLD)
+        elif new_model_type == "clip":
+            ui_clip_thresh_to_set = model_specific_conf.get("clip_thresh", FALLBACK_CLIP_THRESHOLD)
+        ui_combined_thresh_to_set = model_specific_conf.get("combined_thresh", FALLBACK_COMBINED_THRESHOLD)
+        ui_image_only_thresh_to_set = model_specific_conf.get("image_only_thresh", FALLBACK_IMAGE_ONLY_THRESHOLD)
+
         progress(0.7, desc="Initializing ChromaDB client...")
 
         new_chroma_client = chromadb.PersistentClient(path=new_db_path)
@@ -135,6 +161,10 @@ def load_and_switch_model_db(selected_model_path: str, progress=gr.Progress(trac
             new_logit_bias_val,
             new_chroma_client,
             "\n".join(current_indexed_folders),
+            ui_siglip_thresh_to_set,
+            ui_clip_thresh_to_set,
+            ui_combined_thresh_to_set,
+            ui_image_only_thresh_to_set,
         )
     except Exception as e:
         print(f"Error loading model/DB: {e}")
@@ -150,6 +180,10 @@ def load_and_switch_model_db(selected_model_path: str, progress=gr.Progress(trac
             None,
             None,
             "\n".join(current_indexed_folders_on_error),
+            FALLBACK_SIGLIP_THRESHOLD,
+            FALLBACK_CLIP_THRESHOLD,
+            FALLBACK_COMBINED_THRESHOLD,
+            FALLBACK_IMAGE_ONLY_THRESHOLD,
         )
 
 
@@ -181,9 +215,7 @@ def handle_update_sync_button_click(
     try:
         db_update_indexed_folders(
             db_path_str=current_db_path,
-            collection_obj=active_chroma_client_state_val.get_collection(
-                "images"
-            ),
+            collection_obj=active_chroma_client_state_val.get_collection("images"),
             model_obj=active_model_state_val,
             processor_obj=active_processor_state_val,
             device_str=device,
@@ -258,6 +290,7 @@ def handle_add_folder_button_click(
             duration = kwargs.get("duration_seconds", 0)
             gr.Info(f"Folder '{os.path.basename(new_folder_stripped)}' processed in {duration:.2f}s.")
             progress(1, desc=f"Add folder completed in {duration:.2f}s.")
+
     try:
         db_add_folders(
             folders_to_process=[new_folder_stripped],
@@ -326,9 +359,12 @@ def handle_delete_folder_button_click(
 
 def search(
     query: str,
+    query_image_pil,
     initial_n_results_ui: int,
     logit_thresh_ui: float,
     clip_logit_thresh_ui: float,
+    image_only_cosine_thresh_ui: float,
+    combined_cosine_thresh_ui: float,
     active_model_path: str,
     current_model,
     current_processor,
@@ -338,9 +374,17 @@ def search(
     current_chroma_client,
 ):
     start_time = time.time()
+    text_query_present = bool(query and query.strip())
+    image_query_present = query_image_pil is not None
+    text_emb_normalized_float32 = None
+    image_emb_normalized_float32 = None
+    gallery_images = []
 
     if not current_chroma_client or not current_model:
         gr.Warning("Model or Database not loaded. Please select a model.")
+        return []
+    if not text_query_present and not image_query_present:
+        gr.Info("Please provide a text query or an image to search.")
         return []
 
     try:
@@ -353,117 +397,263 @@ def search(
         )
         return []
 
-    processed_query = f"This is a photo of {query}."
-    print(f"Searching: '{processed_query}'")
+    # Process Text Query (if provided)
+    if text_query_present:
+        processed_query = f"This is a photo of {query}."
+        print(f"Processing text query: '{processed_query}'")
+        with torch.no_grad():
+            text_processing_args = {"text": processed_query, "return_tensors": "pt", "truncation": True}
+            if current_model_type == "siglip":
+                text_processing_args["padding"] = "max_length"
+                text_processing_args["max_length"] = 64
+            else:  # For CLIP
+                text_processing_args["padding"] = True
 
-    with torch.no_grad():
-        text_processing_args = {"text": processed_query, "return_tensors": "pt", "truncation": True}
-        if current_model_type == "siglip":
-            text_processing_args["padding"] = "max_length"
-            text_processing_args["max_length"] = 64
-        else:  # For CLIP
-            text_processing_args["padding"] = True
+            if current_model_type != "siglip" and "max_length" in text_processing_args:
+                del text_processing_args["max_length"]
 
-        # Ensure max_length is not passed to CLIP if it was set for SigLIP
-        if current_model_type != "siglip" and "max_length" in text_processing_args:
-            del text_processing_args["max_length"]
+            inputs = current_processor(**text_processing_args).to(device)
+            text_features_from_model = current_model.get_text_features(**inputs)
+            text_features_float32 = text_features_from_model.to(torch.float32)
 
-        inputs = current_processor(**text_processing_args).to(device)
-        text_features_from_model = current_model.get_text_features(**inputs)
-        text_features_float32 = text_features_from_model.to(torch.float32)
-
-        if current_model_type == "siglip" or current_model_type == "clip":
-            text_emb_normalized_float32 = F.normalize(text_features_float32, p=2, dim=-1)
-        else:
-            text_emb_normalized_float32 = text_features_float32
-
-    try:
-        query_results = collection.query(
-            query_embeddings=text_emb_normalized_float32.cpu().squeeze(0).numpy(),
-            n_results=int(initial_n_results_ui),
-            include=["documents", "embeddings", "distances"],
-        )
-    except Exception as e:
-        print(f"ChromaDB query error: {e}")
-        gr.Warning(f"Error searching images: {e}")
-        return []
-
-    gallery_images = []
-    if query_results["documents"] and query_results["embeddings"] and query_results["documents"][0]:
-        candidates_count = len(query_results["documents"][0])
-        print(f"Processing {candidates_count} candidates from DB")
-
-        img_embeddings_list = query_results["embeddings"][0]
-        all_img_embeddings_tensor = torch.tensor(img_embeddings_list, dtype=torch.float32).to(device)
-
-        batch_cos_sim = F.cosine_similarity(
-            text_emb_normalized_float32.squeeze(0),
-            all_img_embeddings_tensor,
-            dim=-1
-        )
-
-        batch_logit_val_for_print = torch.zeros_like(batch_cos_sim)
-        passes_threshold_mask = torch.zeros_like(batch_cos_sim, dtype=torch.bool)
-
-        if current_model_type == "siglip":
-            if current_logit_scale_exp_val is not None and current_logit_bias_val is not None:
-                batch_logit_val_for_print = (batch_cos_sim * current_logit_scale_exp_val) + current_logit_bias_val
-                passes_threshold_mask = batch_logit_val_for_print > logit_thresh_ui
+            if current_model_type == "siglip" or current_model_type == "clip":
+                text_emb_normalized_float32 = F.normalize(text_features_float32, p=2, dim=-1)
             else:
-                print(f"Warning: SigLIP logit scale/bias unavailable for model {active_model_path}")
-                passes_threshold_mask = torch.zeros_like(batch_cos_sim, dtype=torch.bool)
-        elif current_model_type == "clip":
-            if current_logit_scale_exp_val is not None:
-                batch_logit_val_for_print = batch_cos_sim * current_logit_scale_exp_val
-                passes_threshold_mask = batch_logit_val_for_print > clip_logit_thresh_ui
+                text_emb_normalized_float32 = text_features_float32
+
+    # Process Image Query (if provided)
+    if image_query_present:
+        print("Processing image query...")
+        with torch.no_grad():
+            inputs = current_processor(images=[query_image_pil], return_tensors="pt").to(device)
+            query_image_features = current_model.get_image_features(**inputs)
+            query_image_features_float32 = query_image_features.to(torch.float32)
+
+            if current_model_type == "siglip" or current_model_type == "clip":
+                image_emb_normalized_float32 = F.normalize(query_image_features_float32, p=2, dim=-1)
             else:
-                print(f"Warning: CLIP logit scale unavailable for model {active_model_path}")
-                passes_threshold_mask = torch.zeros_like(batch_cos_sim, dtype=torch.bool)
+                image_emb_normalized_float32 = query_image_features_float32
 
-        doc_paths_all = query_results["documents"][0]
-        passing_indices = torch.where(passes_threshold_mask)[0]
+    # --- Search Mode Logic ---
+    if text_query_present and not image_query_present:
+        print("Search Mode: TEXT")
+        try:
+            query_results = collection.query(
+                query_embeddings=text_emb_normalized_float32.cpu().squeeze(0).numpy(),
+                n_results=int(initial_n_results_ui),
+                include=[
+                    "documents",
+                    "embeddings",
+                    "distances",
+                ],  # Distances for CLIP, embeddings for SigLIP logit calc
+            )
+        except Exception as e:
+            print(f"ChromaDB query error (Text): {e}")
+            gr.Warning(f"Error searching images: {e}")
+            return []
 
-        for idx_tensor in passing_indices:
-            idx = idx_tensor.item()
-            doc_path = doc_paths_all[idx]
+        if query_results["documents"] and query_results["embeddings"] and query_results["documents"][0]:
+            candidates_count = len(query_results["documents"][0])
+            print(f"Processing {candidates_count} candidates from DB (Text)")
+
+            img_embeddings_list = query_results["embeddings"][0]
+            all_img_embeddings_tensor = torch.tensor(img_embeddings_list, dtype=torch.float32).to(device)
+
+            # For text, cosine similarity is between text query embedding and DB image embeddings
+            batch_cos_sim = F.cosine_similarity(
+                text_emb_normalized_float32.squeeze(0), all_img_embeddings_tensor, dim=-1
+            )
+
+            batch_logit_val_for_print = torch.zeros_like(batch_cos_sim)
+            passes_threshold_mask = torch.zeros_like(batch_cos_sim, dtype=torch.bool)
+
+            if current_model_type == "siglip":
+                if current_logit_scale_exp_val is not None and current_logit_bias_val is not None:
+                    batch_logit_val_for_print = (batch_cos_sim * current_logit_scale_exp_val) + current_logit_bias_val
+                    passes_threshold_mask = batch_logit_val_for_print > logit_thresh_ui
+                else:
+                    print(f"Warning: SigLIP logit scale/bias unavailable for model {active_model_path}")
+            elif current_model_type == "clip":
+                if current_logit_scale_exp_val is not None:
+                    batch_logit_val_for_print = batch_cos_sim * current_logit_scale_exp_val
+                    passes_threshold_mask = batch_logit_val_for_print > clip_logit_thresh_ui
+                else:
+                    print(f"Warning: CLIP logit scale unavailable for model {active_model_path}")
+
+            doc_paths_all = query_results["documents"][0]
+            passing_indices = torch.where(passes_threshold_mask)[0]
+
+            for idx_tensor in passing_indices:
+                idx = idx_tensor.item()
+                doc_path = doc_paths_all[idx]
+                try:
+                    img = Image.open(doc_path)
+                    gallery_images.append((img, doc_path))
+                except FileNotFoundError:
+                    print(f"Missing: {doc_path}")
+                except Exception as e:
+                    print(f"Error opening {doc_path}: {e}")
+
+            if verbose:
+                for i in range(candidates_count):
+                    doc_path = doc_paths_all[i]
+                    cos_sim_val = batch_cos_sim[i].item()
+                    logit_val = batch_logit_val_for_print[i].item()
+                    sigmoid_val = torch.sigmoid(torch.tensor(logit_val, device=device)).item()
+                    status_char = "✓" if passes_threshold_mask[i].item() else "✗"
+                    log_details = f"(cos: {cos_sim_val:.4f}, logit: {logit_val:.4f}, sigmoid: {sigmoid_val:.4f})"
+                    print(f"{status_char} {doc_path} {log_details}")
+
+    elif image_query_present and not text_query_present:
+        print("Search Mode: IMAGE")
+        try:
+            query_results = collection.query(
+                query_embeddings=image_emb_normalized_float32.cpu().squeeze(0).numpy(),
+                n_results=int(initial_n_results_ui),
+                include=["documents", "embeddings"],
+            )
+        except Exception as e:
+            print(f"ChromaDB query error (Image): {e}")
+            gr.Warning(f"Error searching images: {e}")
+            return []
+
+        if query_results["documents"] and query_results["embeddings"] and query_results["documents"][0]:
+            doc_paths_all = query_results["documents"][0]
+            db_img_embeddings_list = query_results["embeddings"][0]
+            all_db_img_embeddings_tensor = torch.tensor(db_img_embeddings_list, dtype=torch.float32).to(device)
+            candidates_count = len(doc_paths_all)
+            print(f"Processing {candidates_count} candidates from DB (Image)")
+
+            batch_cos_sim_to_query_image = F.cosine_similarity(
+                image_emb_normalized_float32.squeeze(0), all_db_img_embeddings_tensor, dim=-1
+            )
+            passes_threshold_mask = batch_cos_sim_to_query_image >= image_only_cosine_thresh_ui
+
+            passing_indices = torch.where(passes_threshold_mask)[0]
+            temp_results = []  # To sort before adding to gallery_images
+            for idx_tensor in passing_indices:
+                idx = idx_tensor.item()
+                temp_results.append((doc_paths_all[idx], batch_cos_sim_to_query_image[idx].item()))
+
+            temp_results.sort(key=lambda x: x[1], reverse=True)
+
+            for doc_path, cos_sim_val in temp_results:
+                try:
+                    img = Image.open(doc_path)
+                    gallery_images.append((img, doc_path))
+                    if verbose:
+                        print(f"✓ {doc_path} (img_cos_sim: {cos_sim_val:.4f})")
+                except FileNotFoundError:
+                    print(f"Missing: {doc_path}")
+                except Exception as e:
+                    print(f"Error opening {doc_path}: {e}")
+
+            if verbose and not gallery_images and doc_paths_all:
+                print("No images passed the image cosine similarity threshold.")
+                for i in range(len(doc_paths_all)):
+                    print(f"✗ {doc_paths_all[i]} (img_cos_sim: {batch_cos_sim_to_query_image[i].item():.4f})")
+
+    elif text_query_present and image_query_present:
+        print("Search Mode: COMBINED")
+        # 1. Text Search Leg
+        try:
+            text_query_results = collection.query(
+                query_embeddings=text_emb_normalized_float32.cpu().squeeze(0).numpy(),
+                n_results=int(initial_n_results_ui),
+                include=["documents", "embeddings"],
+            )
+        except Exception as e:
+            print(f"ChromaDB query error (Combined - Text Leg): {e}")
+            gr.Warning(f"Error in combined search (text leg): {e}")
+            return []
+
+        # 2. Image Search Leg
+        try:
+            image_query_results = collection.query(
+                query_embeddings=image_emb_normalized_float32.cpu().squeeze(0).numpy(),
+                n_results=int(initial_n_results_ui),
+                include=["documents", "embeddings"],
+            )
+        except Exception as e:
+            print(f"ChromaDB query error (Combined - Image Leg): {e}")
+            gr.Warning(f"Error in combined search (image leg): {e}")
+            return []
+
+        candidate_data = {}  # {doc_path: {'db_embedding': tensor}}
+        if text_query_results["documents"] and text_query_results["documents"][0]:
+            for i, doc_path in enumerate(text_query_results["documents"][0]):
+                if doc_path not in candidate_data:
+                    candidate_data[doc_path] = {
+                        "db_embedding": torch.tensor(text_query_results["embeddings"][0][i], dtype=torch.float32).to(
+                            device
+                        )
+                    }
+
+        if image_query_results["documents"] and image_query_results["documents"][0]:
+            for i, doc_path in enumerate(image_query_results["documents"][0]):
+                if doc_path not in candidate_data:
+                    candidate_data[doc_path] = {
+                        "db_embedding": torch.tensor(image_query_results["embeddings"][0][i], dtype=torch.float32).to(
+                            device
+                        )
+                    }
+
+        print(f"Processing {len(candidate_data)} unique candidates from combined search.")
+        final_combined_results_data = []  # List of (doc_path, combined_score, text_sim, image_sim)
+
+        for doc_path, data_dict in candidate_data.items():
+            db_img_embedding_tensor = data_dict["db_embedding"]
+            text_sim = F.cosine_similarity(
+                text_emb_normalized_float32.squeeze(0), db_img_embedding_tensor.unsqueeze(0)
+            ).item()
+            image_sim = F.cosine_similarity(
+                image_emb_normalized_float32.squeeze(0), db_img_embedding_tensor.unsqueeze(0)
+            ).item()
+            combined_score = (text_sim + image_sim) / 2.0
+
+            if combined_score >= combined_cosine_thresh_ui:
+                final_combined_results_data.append((doc_path, combined_score, text_sim, image_sim))
+
+        final_combined_results_data.sort(key=lambda x: x[1], reverse=True)
+
+        for doc_path, score, ts, Is in final_combined_results_data[: int(initial_n_results_ui)]:
             try:
                 img = Image.open(doc_path)
                 gallery_images.append((img, doc_path))
+                if verbose:
+                    print(f"✓ {doc_path} (comb_score: {score:.4f}, txt_sim: {ts:.4f}, img_sim: {Is:.4f})")
             except FileNotFoundError:
                 print(f"Missing: {doc_path}")
             except Exception as e:
                 print(f"Error opening {doc_path}: {e}")
 
-        if verbose:
-            for i in range(candidates_count):
-                doc_path = doc_paths_all[i]
-                cos_sim_val = batch_cos_sim[i].item()
-                logit_val = batch_logit_val_for_print[i].item()
-                # Calculate sigmoid score for logging
-                sigmoid_val = torch.sigmoid(torch.tensor(logit_val, device=device)).item()
-
-                status_char = "✓" if passes_threshold_mask[i].item() else "✗"
-                log_details = (
-                    f"(cos: {cos_sim_val:.4f}, logit: {logit_val:.4f}, "
-                    f"sigmoid: {sigmoid_val:.4f})"
-                )
-                print(f"{status_char} {doc_path} {log_details}")
+        if verbose and not gallery_images and candidate_data:
+            print("No candidates passed the combined similarity threshold.")
+            for doc_path, data_dict in candidate_data.items():
+                db_img_embedding_tensor = data_dict["db_embedding"]
+                text_sim = F.cosine_similarity(
+                    text_emb_normalized_float32.squeeze(0), db_img_embedding_tensor.unsqueeze(0)
+                ).item()
+                image_sim = F.cosine_similarity(
+                    image_emb_normalized_float32.squeeze(0), db_img_embedding_tensor.unsqueeze(0)
+                ).item()
+                combined_score = (text_sim + image_sim) / 2.0
+                print(f"✗ {doc_path} (comb: {combined_score:.4f}, txt: {text_sim:.4f}, img: {image_sim:.4f})")
 
     result_count = len(gallery_images)
     if result_count == 0:
-        print("No images found above confidence threshold")
+        print("No images found matching the criteria.")
     else:
-        print(f"Returning {result_count} images")
+        print(f"Returning {result_count} images.")
 
     end_time = time.time()
     print(f"Search completed in {(end_time - start_time):.2f}s")
-
     return gallery_images
 
 
 def clear_search_and_gallery():
-    """Clears the search query textbox and the results gallery."""
-    return "", []
+    """Clears the search query textbox, image input, and the results gallery."""
+    return "", None, []
 
 
 css_gallary = """
@@ -502,10 +692,7 @@ function() {
 
 if __name__ == "__main__":
     with gr.Blocks(
-        theme=gr.themes.Default(primary_hue="purple"),
-        js=js_credits,
-        css=css_gallary,
-        title="Local Lens"
+        theme=gr.themes.Default(primary_hue="purple"), js=js_credits, css=css_gallary, title="Local Lens"
     ) as app:
 
         gr.Markdown("# Local Lens")
@@ -528,6 +715,9 @@ if __name__ == "__main__":
                     label="Query",
                     placeholder="This is a photo of...",
                     show_label=False,
+                )
+                query_image_input = gr.Image(
+                    type="pil", label="Image Search (Optional)", show_label=True, elem_id="query_image"
                 )
                 with gr.Row():
                     search_button = gr.Button("Search", variant="primary", min_width=50)
@@ -569,7 +759,7 @@ if __name__ == "__main__":
                         minimum=-15.0,
                         maximum=15.0,
                         step=0.5,
-                        value=SIGLIP_LOGIT_CONFIDENCE_THRESHOLD,
+                        value=FALLBACK_SIGLIP_THRESHOLD,
                         label="Logit Confidence Threshold (SigLIP)",
                         info="SigLIP model confidence. Higher values = more confident.",
                     )
@@ -577,9 +767,25 @@ if __name__ == "__main__":
                         minimum=0.0,
                         maximum=40.0,
                         step=0.5,
-                        value=CLIP_LOGIT_CONFIDENCE_THRESHOLD,
+                        value=FALLBACK_CLIP_THRESHOLD,
                         label="Logit Confidence Threshold (CLIP)",
                         info="CLIP model confidence. Higher values = more confident.",
+                    )
+                    image_only_cosine_thresh_slider = gr.Slider(
+                        minimum=0.0,
+                        maximum=1.0,
+                        step=0.01,
+                        value=FALLBACK_IMAGE_ONLY_THRESHOLD,
+                        label="Cosine Similarity Threshold (Image Only)",
+                        info="For reverse image search (image input only). Higher values = more confident.",
+                    )
+                    combined_cosine_thresh_slider = gr.Slider(
+                        minimum=0.0,
+                        maximum=1.0,
+                        step=0.01,
+                        value=FALLBACK_COMBINED_THRESHOLD,
+                        label="Cosine Similarity Threshold (Combined)",
+                        info="For text + image search. Higher values = more confident.",
                     )
                     batch_size_slider = gr.Slider(
                         minimum=8,
@@ -609,6 +815,10 @@ if __name__ == "__main__":
             logit_bias_state,
             chroma_client_state,
             indexed_folders_display,
+            siglip_thresh_slider,
+            clip_thresh_slider,
+            combined_cosine_thresh_slider,
+            image_only_cosine_thresh_slider,
         ]
 
         app.load(
@@ -662,9 +872,12 @@ if __name__ == "__main__":
 
         search_inputs = [
             query_textbox,
+            query_image_input,
             initial_n_results_slider,
             siglip_thresh_slider,
             clip_thresh_slider,
+            image_only_cosine_thresh_slider,
+            combined_cosine_thresh_slider,
             active_model_path_state,
             model_state,
             processor_state,
@@ -677,6 +890,8 @@ if __name__ == "__main__":
         query_textbox.submit(fn=search, inputs=search_inputs, outputs=[results_gallery])
         search_button.click(fn=search, inputs=search_inputs, outputs=[results_gallery])
 
-        clear_button.click(fn=clear_search_and_gallery, inputs=[], outputs=[query_textbox, results_gallery])
+        clear_button.click(
+            fn=clear_search_and_gallery, inputs=[], outputs=[query_textbox, query_image_input, results_gallery]
+        )
 
     app.launch(inbrowser=True)
