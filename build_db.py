@@ -20,18 +20,6 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 dtype = torch.float16 if device == "cuda" else torch.float32
 
 
-def extract_features_clip(image_paths_batch, model_param, processor_param, device_param, model_type_param):
-    """
-    Extracts CLIP features for a batch of image paths.
-    Skips images that cannot be opened and prints a warning.
-    Returns a tuple: (list_of_embeddings, list_of_successfully_processed_paths)
-    """
-
-    return extract_features(
-        image_paths_batch, model_param, processor_param, device_param, model_type_param
-    )
-
-
 def process_images(
     folders,
     collection,
@@ -78,7 +66,7 @@ def process_images(
                 current_batch_num += 1
                 batch_files = all_files_to_add[i: i + batch_size]
                 try:
-                    batch_embeddings, processed_files = extract_features_clip(
+                    batch_embeddings, processed_files = extract_features(
                         batch_files,
                         model_param,
                         processor_param,
@@ -163,7 +151,7 @@ def process_images(
                 current_batch_num += 1
                 batch_add_files = files_to_add[i: i + add_batch_size]
                 try:
-                    batch_embeddings, processed_files = extract_features_clip(
+                    batch_embeddings, processed_files = extract_features(
                         batch_add_files,
                         model_param,
                         processor_param,
