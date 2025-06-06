@@ -56,13 +56,13 @@ Download the standalone zip (NVIDIA GPU or CPU) from the [releases page](https:/
 
 ## Usage
 
-1.  Add image directories to your Chroma database.
+1.  Add image directories to your Chroma database (via the "Database Management" dropdown in the UI, or via CLI).
 
-2.  Enter your search query (e.g., "an orange and black butterfly").
+2.  Enter your search query (e.g., "an orange and black butterfly") and/or upload an image.
 
 3.  The application will display the results in order of confidence.
 
-4.  Update/sync indexed directories after modifying the original.
+4.  Update/sync indexed directories if necessary.
 
 ## Updating
 
