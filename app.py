@@ -7,8 +7,8 @@ import torch
 import torch.nn.functional as F
 from PIL import Image
 
+from build_db import db_add_folders, db_delete_folder, db_update_indexed_folders
 from model_utils import load_model_and_processor
-from build_db import db_add_folders, db_update_indexed_folders, db_delete_folder
 
 __version__ = "1.1.0"
 
