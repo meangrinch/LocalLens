@@ -81,8 +81,25 @@ def read_indexed_folders(db_path: str) -> list[str]:
 
 def load_and_switch_model_db(selected_model_path: str, progress=gr.Progress(track_tqdm=True)):
     """Loads the selected model, its processor, and initializes/loads its specific ChromaDB."""
+    yield (
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        gr.Textbox(value="Loading model...", interactive=False),
+        None,
+        None,
+        None,
+        None,
+        gr.Dropdown(interactive=False),
+    )
+
     if not selected_model_path:
-        return (
+        yield (
             None,
             None,
             None,
@@ -91,22 +108,22 @@ def load_and_switch_model_db(selected_model_path: str, progress=gr.Progress(trac
             None,
             None,
             None,
-            "No model selected. Please choose a model from the dropdown.",  # indexed_folders_display
+            "No model selected. Please choose a model from the dropdown.",
             FALLBACK_SIGLIP_THRESHOLD,
             FALLBACK_CLIP_THRESHOLD,
             FALLBACK_COMBINED_THRESHOLD,
             FALLBACK_IMAGE_ONLY_THRESHOLD,
+            gr.Dropdown(interactive=True),
         )
-    progress(0, desc="Starting model...")
+        return
 
+    progress(0, desc="Starting model...")
     ui_siglip_thresh_to_set = FALLBACK_SIGLIP_THRESHOLD
     ui_clip_thresh_to_set = FALLBACK_CLIP_THRESHOLD
     ui_combined_thresh_to_set = FALLBACK_COMBINED_THRESHOLD
     ui_image_only_thresh_to_set = FALLBACK_IMAGE_ONLY_THRESHOLD
-
     new_db_path = generate_db_path_for_model(selected_model_path)
     progress(0.1, desc=f"DB path: {new_db_path}")
-
     if not os.path.exists(new_db_path):
         os.makedirs(new_db_path)
         progress(0.15, desc=f"Created directory: {new_db_path}")
@@ -119,17 +136,13 @@ def load_and_switch_model_db(selected_model_path: str, progress=gr.Progress(trac
                 progress(0.2, desc=f"Created {indexed_folders_file}")
         except Exception as e:
             print(f"Error creating indexed folders file: {e}")
-
     print(f"Loading model: {selected_model_path}")
-
     try:
         progress(0.3, desc="Loading model...")
         new_model, new_processor, new_model_type = load_model_and_processor(selected_model_path, device, dtype)
         progress(0.6, desc="Calculating params...")
-
         new_logit_scale_exp_val = new_model.logit_scale.exp().item() if hasattr(new_model, "logit_scale") else None
         new_logit_bias_val = new_model.logit_bias.item() if hasattr(new_model, "logit_bias") else None
-
         model_specific_conf = MODEL_CONFIDENCE_DEFAULTS.get(selected_model_path, {})
         if new_model_type == "siglip":
             ui_siglip_thresh_to_set = model_specific_conf.get("siglip_thresh", FALLBACK_SIGLIP_THRESHOLD)
@@ -137,21 +150,17 @@ def load_and_switch_model_db(selected_model_path: str, progress=gr.Progress(trac
             ui_clip_thresh_to_set = model_specific_conf.get("clip_thresh", FALLBACK_CLIP_THRESHOLD)
         ui_combined_thresh_to_set = model_specific_conf.get("combined_thresh", FALLBACK_COMBINED_THRESHOLD)
         ui_image_only_thresh_to_set = model_specific_conf.get("image_only_thresh", FALLBACK_IMAGE_ONLY_THRESHOLD)
-
         progress(0.7, desc="Initializing ChromaDB client...")
-
         new_chroma_client = chromadb.PersistentClient(path=new_db_path)
         try:
             new_chroma_client.get_or_create_collection(name="images", metadata={"hnsw:space": "cosine"})
         except Exception as db_e:
             print(f"ChromaDB collection error: {db_e}")
             gr.Warning(f"ChromaDB client initialized for '{new_db_path}', but error ensuring collection: {db_e}")
-
         progress(0.9, desc="ChromaDB client initialized.")
         gr.Info(f"Successfully switched to model: {selected_model_path} and DB: {new_db_path}")
-
         current_indexed_folders = read_indexed_folders(new_db_path)
-        return (
+        yield (
             selected_model_path,
             new_db_path,
             new_model,
@@ -165,12 +174,13 @@ def load_and_switch_model_db(selected_model_path: str, progress=gr.Progress(trac
             ui_clip_thresh_to_set,
             ui_combined_thresh_to_set,
             ui_image_only_thresh_to_set,
+            gr.Dropdown(interactive=True),
         )
     except Exception as e:
         print(f"Error loading model/DB: {e}")
         gr.Error(f"Error loading model/DB for {selected_model_path}: {e}")
         current_indexed_folders_on_error = read_indexed_folders(new_db_path)
-        return (
+        yield (
             selected_model_path,
             new_db_path,
             None,
@@ -184,6 +194,7 @@ def load_and_switch_model_db(selected_model_path: str, progress=gr.Progress(trac
             FALLBACK_CLIP_THRESHOLD,
             FALLBACK_COMBINED_THRESHOLD,
             FALLBACK_IMAGE_ONLY_THRESHOLD,
+            gr.Dropdown(interactive=True),
         )
 
 
@@ -601,18 +612,26 @@ def search(
         print(f"Processing {len(candidate_data)} unique candidates from combined search.")
         final_combined_results_data = []  # List of (doc_path, combined_score, text_sim, image_sim)
 
-        for doc_path, data_dict in candidate_data.items():
-            db_img_embedding_tensor = data_dict["db_embedding"]
-            text_sim = F.cosine_similarity(
-                text_emb_normalized_float32.squeeze(0), db_img_embedding_tensor.unsqueeze(0)
-            ).item()
-            image_sim = F.cosine_similarity(
-                image_emb_normalized_float32.squeeze(0), db_img_embedding_tensor.unsqueeze(0)
-            ).item()
-            combined_score = (text_sim + image_sim) / 2.0
+        candidate_paths = list(candidate_data.keys())
+        if candidate_paths:
+            # Batch process all candidates
+            all_db_embeddings_tensor = torch.stack([candidate_data[p]["db_embedding"] for p in candidate_paths])
 
-            if combined_score >= combined_cosine_thresh_ui:
-                final_combined_results_data.append((doc_path, combined_score, text_sim, image_sim))
+            # Batched cosine similarity
+            text_sims_batch = F.cosine_similarity(text_emb_normalized_float32, all_db_embeddings_tensor)
+            image_sims_batch = F.cosine_similarity(image_emb_normalized_float32, all_db_embeddings_tensor)
+
+            # Calculate combined score and filter
+            combined_scores_batch = (text_sims_batch + image_sims_batch) / 2.0
+            passing_mask = combined_scores_batch >= combined_cosine_thresh_ui
+            passing_indices = torch.where(passing_mask)[0]
+
+            for idx in passing_indices:
+                doc_path = candidate_paths[idx]
+                score = combined_scores_batch[idx].item()
+                ts = text_sims_batch[idx].item()
+                Is = image_sims_batch[idx].item()
+                final_combined_results_data.append((doc_path, score, ts, Is))
 
         final_combined_results_data.sort(key=lambda x: x[1], reverse=True)
 
@@ -723,27 +742,26 @@ if __name__ == "__main__":
                     search_button = gr.Button("Search", variant="primary", min_width=50)
                     clear_button = gr.Button("Clear", min_width=50)
 
-                gr.Markdown("### Model & Database Management")
+                gr.Markdown("### Model & Database")
                 model_dropdown = gr.Dropdown(
                     choices=AVAILABLE_MODELS,
                     value=None,
                     label="Select Model",
                     allow_custom_value=True,
                 )
+                with gr.Accordion("Database Management", open=False):
+                    indexed_folders_display = gr.Textbox(
+                        label="Indexed Folders", interactive=False, lines=3, max_lines=5
+                    )
+                    update_db_button = gr.Button("Full Update/Sync Active DB", variant="primary")
 
-                gr.Markdown("#### Indexed Folders for Active DB")
-                indexed_folders_display = gr.Textbox(
-                    label="Currently Indexed Folders", interactive=False, lines=3, max_lines=5
-                )
-                update_db_button = gr.Button("Full Update/Sync Active DB", variant="primary")
-
-                new_folder_textbox = gr.Textbox(
-                    label="Folder Path to Add/Delete",
-                    placeholder="/path/to/your/images",
-                )
-                with gr.Row():
-                    add_folder_button = gr.Button("Add Folder", min_width=50)
-                    delete_folder_button = gr.Button("Delete Folder", variant="stop", min_width=50)
+                    new_folder_textbox = gr.Textbox(
+                        label="Folder Path to Add/Delete",
+                        placeholder="/path/to/your/images",
+                    )
+                    with gr.Row():
+                        add_folder_button = gr.Button("Add Folder", min_width=50)
+                        delete_folder_button = gr.Button("Delete Folder", variant="stop", min_width=50)
 
                 gr.Markdown("### Advanced Parameters")
                 with gr.Accordion("Advanced Parameters", open=False):
@@ -819,6 +837,7 @@ if __name__ == "__main__":
             clip_thresh_slider,
             combined_cosine_thresh_slider,
             image_only_cosine_thresh_slider,
+            model_dropdown,
         ]
 
         app.load(
