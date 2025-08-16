@@ -64,6 +64,8 @@ Download the standalone zip (NVIDIA GPU or CPU) from the [releases page](https:/
 
 4.  Update/sync indexed directories if necessary.
 
+5.  (Optional) Edit and run `run_find_duplicates.bat` with a specified image directory.
+
 ## Updating
 
 Navigate to the `LocalLens` directory and run:
