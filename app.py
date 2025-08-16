@@ -29,7 +29,7 @@ FALLBACK_IMAGE_ONLY_THRESHOLD = 0.70
 MODEL_CONFIDENCE_DEFAULTS = {
     "google/siglip2-so400m-patch16-512": {"siglip_thresh": -4.0, "combined_thresh": 0.50, "image_only_thresh": 0.85},
     "openai/clip-vit-large-patch14": {"clip_thresh": 20.0, "combined_thresh": 0.45, "image_only_thresh": 0.70},
-    "laion/CLIP-ViT-H-14-laion2B-s32B-b79K": {"clip_thresh": 25.0, "combined_thresh": 0.45, "image_only_thresh": 0.70},
+    "laion/CLIP-ViT-H-14-laion2B-s32B-b79K": {"clip_thresh": 22.0, "combined_thresh": 0.45, "image_only_thresh": 0.70},
 }
 
 verbose = False  # For detailed confidence logging
