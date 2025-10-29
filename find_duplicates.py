@@ -15,7 +15,7 @@ IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"]
 
 
 def get_simplified_model_identifier(model_path_str: str) -> str:
-    """Extracts a simplified model identifier (type+size) from the model path.
+    """Extract simplified model identifier (type+size) from model path.
 
     Mirrors logic used in the web app to map a model to its DB subfolder.
     """
@@ -26,12 +26,12 @@ def get_simplified_model_identifier(model_path_str: str) -> str:
     if "siglip2" in model_name_part:
         sub_parts = model_name_part.split("-")
         if len(sub_parts) >= 2:
-            return f"{sub_parts[0]}-{sub_parts[1]}"  # e.g., "siglip2-so400m"
+            return f"{sub_parts[0]}-{sub_parts[1]}"
         return model_name_part
     elif "clip" in model_name_part:
         sub_parts = model_name_part.split("-")
         if len(sub_parts) >= 3:
-            return f"{sub_parts[0]}-{sub_parts[1]}-{sub_parts[2]}"  # e.g., "clip-vit-large"
+            return f"{sub_parts[0]}-{sub_parts[1]}-{sub_parts[2]}"
         return model_name_part
     return model_name_part.replace("-", "_").replace(".", "_")
 
@@ -41,15 +41,7 @@ def default_db_path_for_model(model_path_str: str) -> str:
 
 
 def list_image_files(directory_path: str, recursive: bool) -> List[str]:
-    """Collects image file paths from a directory.
-
-    Args:
-        directory_path: Directory to search.
-        recursive: Whether to traverse subdirectories.
-
-    Returns:
-        A list of absolute paths to image files.
-    """
+    """Collect image file paths from a directory."""
     image_paths: List[str] = []
     if recursive:
         for root, _, files in os.walk(directory_path):
@@ -60,7 +52,9 @@ def list_image_files(directory_path: str, recursive: bool) -> List[str]:
         try:
             for file_name in os.listdir(directory_path):
                 file_path = os.path.join(directory_path, file_name)
-                if os.path.isfile(file_path) and any(file_name.lower().endswith(ext) for ext in IMAGE_EXTENSIONS):
+                if os.path.isfile(file_path) and any(
+                    file_name.lower().endswith(ext) for ext in IMAGE_EXTENSIONS
+                ):
                     image_paths.append(os.path.abspath(file_path))
         except FileNotFoundError:
             return []
@@ -75,11 +69,7 @@ def compute_embeddings(
     model_type: str,
     batch_size: int,
 ) -> Tuple[np.ndarray, List[str]]:
-    """Computes normalized embeddings for images in batches.
-
-    Returns:
-        (embeddings_float32, processed_paths)
-    """
+    """Compute normalized embeddings for images in batches."""
     if not image_paths:
         return np.empty((0, 0), dtype=np.float32), []
 
@@ -89,7 +79,7 @@ def compute_embeddings(
     total = len(image_paths)
     num_batches = (total + batch_size - 1) // batch_size
     for batch_index in range(0, total, batch_size):
-        batch_paths = image_paths[batch_index: batch_index + batch_size]
+        batch_paths = image_paths[batch_index : batch_index + batch_size]
         try:
             batch_embeds, processed_paths = extract_features(
                 batch_paths,
@@ -109,7 +99,9 @@ def compute_embeddings(
 
         processed_so_far = min(batch_index + batch_size, total)
         current_batch_num = (batch_index // batch_size) + 1
-        print(f"Embeddings: batch {current_batch_num}/{num_batches} (processed {processed_so_far}/{total})")
+        print(
+            f"Embeddings: batch {current_batch_num}/{num_batches} (processed {processed_so_far}/{total})"
+        )
 
     if not all_embeddings:
         return np.empty((0, 0), dtype=np.float32), []
@@ -118,14 +110,13 @@ def compute_embeddings(
     return embeddings.astype(np.float32, copy=False), all_paths
 
 
-def fetch_embeddings_from_db(collection, ids: List[str], batch_size: int = 1000) -> dict:
-    """Fetches embeddings for given IDs from ChromaDB in batches.
-
-    Returns a mapping: id -> np.ndarray (float32)
-    """
+def fetch_embeddings_from_db(
+    collection, ids: List[str], batch_size: int = 1000
+) -> dict:
+    """Fetch embeddings for given IDs from ChromaDB in batches."""
     id_to_embedding: dict = {}
     for i in range(0, len(ids), batch_size):
-        batch_ids = ids[i: i + batch_size]
+        batch_ids = ids[i : i + batch_size]
         try:
             res = collection.get(ids=batch_ids, include=["embeddings"])
         except Exception as e:
@@ -146,10 +137,9 @@ def find_similar_pairs(
     threshold: float,
     block_size: int = 1024,
 ) -> List[Tuple[float, str, str]]:
-    """Finds pairs of images with cosine similarity >= threshold.
+    """Find pairs of images with cosine similarity >= threshold.
 
-    Assumes `embeddings` are already L2-normalized. Works in blocks to reduce memory.
-    Returns a list of (similarity, path_i, path_j).
+    Assumes embeddings are already L2-normalized. Works in blocks to reduce memory.
     """
     num_images = embeddings.shape[0]
     if num_images < 2:
@@ -163,33 +153,31 @@ def find_similar_pairs(
     # Process by row blocks against the full matrix
     for row_start in range(0, num_images, block_size):
         row_end = min(row_start + block_size, num_images)
-        block = E[row_start:row_end]  # shape (b, d)
+        block = E[row_start:row_end]
 
-        # Full similarity of block against all embeddings
         # Since vectors are normalized, cosine similarity = dot product
-        sim_block = np.matmul(block, E.T)  # (b, n)
+        sim_block = np.matmul(block, E.T)
 
         # Iterate within the block and only take upper triangle (j > i)
         for local_row, global_i in enumerate(range(row_start, row_end)):
-            # Mask out j <= i to avoid duplicates and self-pairs
             row_sims = sim_block[local_row]
             j_start = global_i + 1
             if j_start >= num_images:
                 continue
             sims = row_sims[j_start:]
-            # Find indices where sim >= threshold
             passing = np.where(sims >= threshold)[0]
             for offset in passing.tolist():
                 j = j_start + offset
                 results.append((float(sims[offset]), paths[global_i], paths[j]))
 
-    # Sort by similarity descending for readability
     results.sort(key=lambda t: t[0], reverse=True)
     return results
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Find duplicate or near-duplicate images using CLIP embeddings.")
+    parser = argparse.ArgumentParser(
+        description="Find duplicate or near-duplicate images using CLIP embeddings."
+    )
     parser.add_argument("directory", help="Directory containing images to scan")
     parser.add_argument(
         "--model",
@@ -208,8 +196,15 @@ def main():
         default=0.93,
         help="Cosine similarity threshold for reporting duplicates (default: 0.995)",
     )
-    parser.add_argument("--batch-size", type=int, default=64, help="Batch size for embedding extraction (default: 64)")
-    parser.add_argument("--recursive", action="store_true", help="Recursively search subdirectories")
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=64,
+        help="Batch size for embedding extraction (default: 64)",
+    )
+    parser.add_argument(
+        "--recursive", action="store_true", help="Recursively search subdirectories"
+    )
     parser.add_argument(
         "--block-size",
         type=int,
@@ -257,7 +252,9 @@ def main():
             collection = client.get_collection(name="images")
         except Exception:
             # Create collection if not exists (cosine space)
-            collection = client.create_collection(name="images", metadata={"hnsw:space": "cosine"})
+            collection = client.create_collection(
+                name="images", metadata={"hnsw:space": "cosine"}
+            )
     except Exception as e:
         print(f"Warning: Could not initialize ChromaDB at {db_path}: {e}")
         if args.db_only:
@@ -284,11 +281,14 @@ def main():
     # If there are missing images, decide whether to compute
     if missing_paths:
         if args.db_only:
-            print(f"DB-only mode: {len(missing_paths)} images missing embeddings; they will be skipped.")
+            print(
+                f"DB-only mode: {len(missing_paths)} images missing embeddings; they will be skipped."
+            )
         else:
-            # Lazily load model only if needed
             print(f"Loading model: {args.model}")
-            model, processor, model_type = load_model_and_processor(args.model, device, dtype)
+            model, processor, model_type = load_model_and_processor(
+                args.model, device, dtype
+            )
 
             t0 = time.time()
             miss_embeddings, miss_processed = compute_embeddings(
@@ -303,12 +303,19 @@ def main():
             if miss_embeddings.size == 0 or len(miss_processed) == 0:
                 print("No embeddings computed for missing images.")
             else:
-                print(f"Computed embeddings for {len(miss_processed)} missing images in {t1 - t0:.2f}s")
-                # Optionally upsert to DB for future runs
+                print(
+                    f"Computed embeddings for {len(miss_processed)} missing images in {t1 - t0:.2f}s"
+                )
                 if collection is not None and not args.no_upsert:
                     try:
-                        collection.upsert(embeddings=miss_embeddings, documents=miss_processed, ids=miss_processed)
-                        print(f"Upserted {len(miss_processed)} embeddings into DB: {db_path}")
+                        collection.upsert(
+                            embeddings=miss_embeddings,
+                            documents=miss_processed,
+                            ids=miss_processed,
+                        )
+                        print(
+                            f"Upserted {len(miss_processed)} embeddings into DB: {db_path}"
+                        )
                     except Exception as e:
                         print(f"Warning: failed to upsert embeddings: {e}")
                 # Append to working arrays following the directory order
@@ -326,7 +333,12 @@ def main():
 
     # Pairwise similarity search
     print(f"Finding pairs with cosine similarity >= {args.threshold}")
-    pairs = find_similar_pairs(embeddings, processed_paths, threshold=args.threshold, block_size=args.block_size)
+    pairs = find_similar_pairs(
+        embeddings,
+        processed_paths,
+        threshold=args.threshold,
+        block_size=args.block_size,
+    )
 
     if not pairs:
         print("No duplicate or near-duplicate pairs found.")
