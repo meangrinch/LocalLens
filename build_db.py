@@ -41,13 +41,19 @@ def process_images(
                 continue
             for f_name in os.listdir(folder_path):
                 file_path = os.path.join(folder_path, f_name)
-                if os.path.isfile(file_path) and any(f_name.lower().endswith(ext) for ext in IMAGE_EXTENSIONS):
+                if os.path.isfile(file_path) and any(
+                    f_name.lower().endswith(ext) for ext in IMAGE_EXTENSIONS
+                ):
                     all_files_to_add.append(os.path.abspath(file_path))
 
         if not all_files_to_add:
             print("No image files found to add")
             if progress_callback:
-                progress_callback(status="start_processing", folders_being_processed=folders, total_images_to_process=0)
+                progress_callback(
+                    status="start_processing",
+                    folders_being_processed=folders,
+                    total_images_to_process=0,
+                )
                 progress_callback(status="all_batches_done", total_successfully_added=0)
         else:
             print(f"Processing {len(all_files_to_add)} images...")
@@ -60,11 +66,15 @@ def process_images(
 
             batch_size = batch_size_param
             processed_count = 0
-            total_batches = (len(all_files_to_add) + batch_size - 1) // batch_size if all_files_to_add else 0
+            total_batches = (
+                (len(all_files_to_add) + batch_size - 1) // batch_size
+                if all_files_to_add
+                else 0
+            )
             current_batch_num = 0
             for i in range(0, len(all_files_to_add), batch_size):
                 current_batch_num += 1
-                batch_files = all_files_to_add[i: i + batch_size]
+                batch_files = all_files_to_add[i : i + batch_size]
                 try:
                     batch_embeddings, processed_files = extract_features(
                         batch_files,
@@ -80,7 +90,9 @@ def process_images(
                             ids=processed_files,
                         )
                         processed_count += len(processed_files)
-                        print(f"Batch {current_batch_num}/{total_batches}: {len(processed_files)} images done.")
+                        print(
+                            f"Batch {current_batch_num}/{total_batches}: {len(processed_files)} images done."
+                        )
                         if progress_callback:
                             progress_callback(
                                 status="batch_processed",
@@ -91,17 +103,24 @@ def process_images(
                                 total_images_to_process=len(all_files_to_add),
                             )
                     elif batch_files:
-                        print(f"Batch failed: {len(batch_files)} files could not be processed")
+                        print(
+                            f"Batch failed: {len(batch_files)} files could not be processed"
+                        )
                 except Exception as e:
                     print(f"Error processing batch: {e}")
             if processed_count > 0:
                 print(f"Successfully added {processed_count} images")
                 if progress_callback:
-                    progress_callback(status="all_batches_done", total_successfully_added=processed_count)
+                    progress_callback(
+                        status="all_batches_done",
+                        total_successfully_added=processed_count,
+                    )
             elif not all_files_to_add and progress_callback:
                 progress_callback(status="all_batches_done", total_successfully_added=0)
             elif progress_callback:
-                progress_callback(status="all_batches_done", total_successfully_added=processed_count)
+                progress_callback(
+                    status="all_batches_done", total_successfully_added=processed_count
+                )
 
     elif mode == "update":
         print("Updating database...")
@@ -114,14 +133,18 @@ def process_images(
                 continue
             for f_name in os.listdir(indexed_folder_path):
                 file_path = os.path.join(indexed_folder_path, f_name)
-                if os.path.isfile(file_path) and any(f_name.lower().endswith(ext) for ext in IMAGE_EXTENSIONS):
+                if os.path.isfile(file_path) and any(
+                    f_name.lower().endswith(ext) for ext in IMAGE_EXTENSIONS
+                ):
                     current_filesystem_files.add(os.path.abspath(file_path))
 
         existing_db_files = set()
         try:
             db_content = collection.get(include=["documents"])
             if db_content and db_content["documents"] is not None:
-                existing_db_files = set(os.path.abspath(doc) for doc in db_content["documents"])
+                existing_db_files = set(
+                    os.path.abspath(doc) for doc in db_content["documents"]
+                )
         except Exception as e:
             print(f"Error fetching from database: {e}")
             return
@@ -129,13 +152,15 @@ def process_images(
         files_to_add = list(current_filesystem_files - existing_db_files)
         files_to_delete = list(existing_db_files - current_filesystem_files)
 
-        print(f"Found {len(current_filesystem_files)} files in filesystem, {len(existing_db_files)} in database")
+        print(
+            f"Found {len(current_filesystem_files)} files in filesystem, {len(existing_db_files)} in database"
+        )
 
         if files_to_delete:
             print(f"Deleting {len(files_to_delete)} stale images...")
             delete_batch_size = 500
             for i in range(0, len(files_to_delete), delete_batch_size):
-                batch_delete_ids = files_to_delete[i: i + delete_batch_size]
+                batch_delete_ids = files_to_delete[i : i + delete_batch_size]
                 try:
                     collection.delete(ids=batch_delete_ids)
                 except Exception as e:
@@ -145,11 +170,15 @@ def process_images(
             print(f"Adding {len(files_to_add)} new images...")
             add_batch_size = batch_size_param
             processed_count = 0
-            total_batches = (len(files_to_add) + add_batch_size - 1) // add_batch_size if files_to_add else 0
+            total_batches = (
+                (len(files_to_add) + add_batch_size - 1) // add_batch_size
+                if files_to_add
+                else 0
+            )
             current_batch_num = 0
             for i in range(0, len(files_to_add), add_batch_size):
                 current_batch_num += 1
-                batch_add_files = files_to_add[i: i + add_batch_size]
+                batch_add_files = files_to_add[i : i + add_batch_size]
                 try:
                     batch_embeddings, processed_files = extract_features(
                         batch_add_files,
@@ -165,9 +194,13 @@ def process_images(
                             ids=processed_files,
                         )
                         processed_count += len(processed_files)
-                        print(f"Batch {current_batch_num}/{total_batches}: {len(processed_files)} images done.")
+                        print(
+                            f"Batch {current_batch_num}/{total_batches}: {len(processed_files)} images done."
+                        )
                     elif batch_add_files:
-                        print(f"Batch failed: {len(batch_add_files)} files could not be processed")
+                        print(
+                            f"Batch failed: {len(batch_add_files)} files could not be processed"
+                        )
                 except Exception as e:
                     print(f"Error processing batch: {e}")
             if processed_count > 0:
@@ -193,11 +226,16 @@ def db_add_folders(
     ensure_file_exists(indexed_folders_file_path)
 
     current_indexed_folders = set()
-    if os.path.exists(indexed_folders_file_path) and os.path.getsize(indexed_folders_file_path) > 0:
+    if (
+        os.path.exists(indexed_folders_file_path)
+        and os.path.getsize(indexed_folders_file_path) > 0
+    ):
         with open(indexed_folders_file_path, "r") as f:
             current_indexed_folders = set(line.strip() for line in f if line.strip())
 
-    folders_to_actually_add_to_txt = [f for f in folders_to_process if f not in current_indexed_folders]
+    folders_to_actually_add_to_txt = [
+        f for f in folders_to_process if f not in current_indexed_folders
+    ]
 
     process_images(
         folders_to_process,
@@ -222,7 +260,9 @@ def db_add_folders(
     end_time = time.time()
     print(f"Add folder completed in {(end_time - start_time):.2f}s")
     if progress_callback:
-        progress_callback(status="add_folder_completed", duration_seconds=(end_time - start_time))
+        progress_callback(
+            status="add_folder_completed", duration_seconds=(end_time - start_time)
+        )
 
 
 def db_update_indexed_folders(
@@ -239,7 +279,10 @@ def db_update_indexed_folders(
     indexed_folders_file_path = os.path.join(db_path_str, "indexed_folders.txt")
     ensure_file_exists(indexed_folders_file_path)
 
-    if os.path.exists(indexed_folders_file_path) and os.path.getsize(indexed_folders_file_path) > 0:
+    if (
+        os.path.exists(indexed_folders_file_path)
+        and os.path.getsize(indexed_folders_file_path) > 0
+    ):
         with open(indexed_folders_file_path, "r") as f:
             indexed_folders = [line.strip() for line in f if line.strip()]
         if indexed_folders:
@@ -261,7 +304,9 @@ def db_update_indexed_folders(
     print(f"Update completed in {(end_time - start_time):.2f}s")
 
 
-def db_delete_folder(folder_to_delete_str: str, db_path_str: str, collection_obj) -> bool:
+def db_delete_folder(
+    folder_to_delete_str: str, db_path_str: str, collection_obj
+) -> bool:
     """
     Deletes a folder from the index file and removes its images from the database.
     Returns True if any action was taken (folder removed from index or images deleted), False otherwise.
@@ -274,7 +319,10 @@ def db_delete_folder(folder_to_delete_str: str, db_path_str: str, collection_obj
 
     # Remove from indexed_folders.txt
     raw_indexed_folders_read = []
-    if os.path.exists(indexed_folders_file_path) and os.path.getsize(indexed_folders_file_path) > 0:
+    if (
+        os.path.exists(indexed_folders_file_path)
+        and os.path.getsize(indexed_folders_file_path) > 0
+    ):
         with open(indexed_folders_file_path, "r") as f:
             raw_indexed_folders_read = [line.strip() for line in f if line.strip()]
 
@@ -300,13 +348,17 @@ def db_delete_folder(folder_to_delete_str: str, db_path_str: str, collection_obj
         for root, _, files in os.walk(folder_to_delete_abs):
             for f_name in files:
                 if any(f_name.lower().endswith(ext) for ext in IMAGE_EXTENSIONS):
-                    files_to_remove_from_db.append(os.path.abspath(os.path.join(root, f_name)))
+                    files_to_remove_from_db.append(
+                        os.path.abspath(os.path.join(root, f_name))
+                    )
 
         if files_to_remove_from_db:
             action_taken = True
             try:
                 collection_obj.delete(ids=files_to_remove_from_db)
-                print(f"Successfully removed {len(files_to_remove_from_db)} images from database")
+                print(
+                    f"Successfully removed {len(files_to_remove_from_db)} images from database"
+                )
             except Exception as e:
                 print(f"Error removing images from database: {e}")
         else:
@@ -324,25 +376,44 @@ def ensure_file_exists(filepath):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Index image folders for a specific model and database.")
+    parser = argparse.ArgumentParser(
+        description="Index image folders for a specific model and database."
+    )
     parser.add_argument(
-        "--model_path", required=True, help="Hugging Face ID or local path (e.g., 'google/siglip2-so400m-patch16-512')"
+        "--model_path",
+        required=True,
+        help="Hugging Face ID or local path (e.g., 'google/siglip2-so400m-patch16-512')",
     )
     parser.add_argument(
         "--db_path",
         required=True,
         help="Path to the ChromaDB directory for this model (e.g., 'img_db/siglip2_so400m')",
     )
-    parser.add_argument("--add", nargs="+", help="Folders to add to the database. Creates DB if not exists.")
-    parser.add_argument("--update", action="store_true", help="Update existing database by rescanning indexed folders.")
-    parser.add_argument("--delete_folder", type=str, help="Folder path to remove from the index and database.")
-    parser.add_argument("--batch_size", type=int, default=96, help="Batch size for adding images to DB.")
+    parser.add_argument(
+        "--add",
+        nargs="+",
+        help="Folders to add to the database. Creates DB if not exists.",
+    )
+    parser.add_argument(
+        "--update",
+        action="store_true",
+        help="Update existing database by rescanning indexed folders.",
+    )
+    parser.add_argument(
+        "--delete_folder",
+        type=str,
+        help="Folder path to remove from the index and database.",
+    )
+    parser.add_argument(
+        "--batch_size", type=int, default=96, help="Batch size for adding images to DB."
+    )
     args = parser.parse_args()
 
     os.makedirs(args.db_path, exist_ok=True)
 
-    print(f"Loading model: {args.model_path}")
-    model, processor, model_type = load_model_and_processor(args.model_path, device, dtype)
+    model, processor, model_type = load_model_and_processor(
+        args.model_path, device, dtype
+    )
     print(f"Model loaded: {model_type.upper()}")
 
     print(f"Initializing ChromaDB: {args.db_path}")
@@ -356,7 +427,9 @@ if __name__ == "__main__":
         collection = client.get_collection(name=collection_name)
         print(f"Using existing collection: '{collection_name}'")
     except Exception:
-        collection = client.create_collection(name=collection_name, metadata={"hnsw:space": "cosine"})
+        collection = client.create_collection(
+            name=collection_name, metadata={"hnsw:space": "cosine"}
+        )
         print(f"Created collection: '{collection_name}'")
 
     if args.add:
@@ -368,7 +441,7 @@ if __name__ == "__main__":
             processor_obj=processor,
             device_str=device,
             model_type_str=model_type,
-            batch_size=args.batch_size
+            batch_size=args.batch_size,
         )
     elif args.update:
         db_update_indexed_folders(
@@ -378,13 +451,13 @@ if __name__ == "__main__":
             processor_obj=processor,
             device_str=device,
             model_type_str=model_type,
-            batch_size=args.batch_size
+            batch_size=args.batch_size,
         )
     elif args.delete_folder:
         db_delete_folder(
             folder_to_delete_str=args.delete_folder,
             db_path_str=args.db_path,
-            collection_obj=collection
+            collection_obj=collection,
         )
     else:
         print("No action specified (--add, --update, or --delete_folder)")
