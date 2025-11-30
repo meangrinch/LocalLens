@@ -21,6 +21,8 @@ A local image search engine powered by CLIP/SigLIP 2. Search for images in your 
 
 Download the standalone zip from the releases page: [Releases](https://github.com/meangrinch/LocalLens/releases)
 
+- Pre-downloaded package: Download per version, no setup required, and no included update script. Contains `PyTorch v2.9.1+cu128`.
+
 ### Manual install
 
 1. Clone and enter the repo
@@ -59,10 +61,11 @@ pip install -r requirements.txt
 
 ### Web UI (Gradio)
 
-1. Add image directories to your Chroma database (via the "Database Management" dropdown in the UI, or via CLI)
-2. Enter your search query (e.g., "an orange and black butterfly") and/or upload an image
-3. The application will display the results in order of confidence
-4. Update/sync indexed directories if necessary
+1. Select a model (automatically downloads to hugging face cache `~/.cache/huggingface/hub`)
+2. Add image directories to your Chroma database (via the "Database Management" dropdown in the UI, or via CLI)
+3. Enter your search query (e.g., "an orange and black butterfly") and/or upload an image (for reverse image search/combined text + image search)
+4. The application will display the results in order of confidence
+5. Update/sync indexed directories if necessary
 
 ### Find duplicates
 
