@@ -1,13 +1,13 @@
 ## Local Lens
 
-A local image search engine powered by CLIP/SigLIP 2. Search for images in your local directories using natural language queries.
+Web application for finding images in your local directories using natural language queries or reverse image search. Powered by vision embedding models (e.g., CLIP/SigLIP 2).
 
 ## Features
 
-- Image-text retrieval using CLIP/SigLIP 2/Other models
-- Index and update local image directories using ChromaDB
-- Perform natural language searches to find relevant images
-- Find duplicate images in a ChromaDB database
+- Index and update local image directories using ChromaDB (recursive)
+- Perform targeted searches to retrieve relevant images (text only, image only, text + image)
+- Display search results in a gallery in order of confidence
+- Find duplicate image pairs
 - Web UI (Gradio)
 
 ## Requirements
