@@ -2,14 +2,14 @@
 
 Web application for finding images in your local directories using natural language queries or reverse image search. Powered by vision embedding models (e.g., CLIP/SigLIP 2).
 
-<img src="docs/images/example_screenshot.png" alt="Screenshot" width="800">
+<img src="docs/images/example_screenshot.png" alt="Screenshot" width="100%">
 
 ## Features
 
 - Index and update local image directories using ChromaDB (recursive)
 - Perform targeted searches to retrieve relevant images (text only, image only, text + image)
+- Retrieve duplicate image pairs
 - Display search results in a gallery in order of confidence
-- Find duplicate image pairs
 - Web UI (Gradio)
 
 ## Requirements
