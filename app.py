@@ -446,6 +446,28 @@ def update_duplicate_folder_dropdown(current_db_path: str):
     return gr.Dropdown(choices=folders, value=folders[0] if folders else None)
 
 
+def get_relative_caption(abs_path: str, indexed_folders_text: str) -> str:
+    """Returns the path relative to the indexed parent folder."""
+    if not abs_path:
+        return ""
+    if not indexed_folders_text:
+        return abs_path
+
+    folders = [f.strip() for f in indexed_folders_text.split("\n") if f.strip()]
+    folders.sort(key=len, reverse=True)
+
+    abs_path_norm = os.path.normpath(os.path.abspath(abs_path))
+
+    for folder in folders:
+        folder_norm = os.path.normpath(os.path.abspath(folder))
+        if abs_path_norm.startswith(folder_norm):
+            try:
+                return os.path.relpath(abs_path_norm, folder_norm)
+            except ValueError:
+                continue
+    return abs_path
+
+
 def handle_find_duplicates(
     duplicate_folder_path: str,
     duplicate_threshold: float,
@@ -458,6 +480,7 @@ def handle_find_duplicates(
     batch_size_ui: int,
     verbose_ui: bool,
     initial_n_results_ui: int,
+    indexed_folders_text: str,
     progress=gr.Progress(track_tqdm=True),
 ):
     """Finds duplicate images in a folder using the active model and ChromaDB."""
@@ -507,14 +530,17 @@ def handle_find_duplicates(
         # Convert pairs to gallery format
         gallery_images = []
         for _, path1, path2 in pairs:
-            try:
-                # Add both image paths from the pair
-                gallery_images.append(path1)
-                gallery_images.append(path2)
-            except FileNotFoundError:
-                print(f"Missing: {path1} or {path2}")
-            except Exception as e:
-                print(f"Error opening {path1} or {path2}: {e}")
+            if os.path.exists(path1):
+                caption1 = get_relative_caption(path1, indexed_folders_text)
+                gallery_images.append((path1, caption1))
+            else:
+                print(f"Missing: {path1}")
+
+            if os.path.exists(path2):
+                caption2 = get_relative_caption(path2, indexed_folders_text)
+                gallery_images.append((path2, caption2))
+            else:
+                print(f"Missing: {path2}")
 
         total_images_found = len(gallery_images)
         gallery_images = gallery_images[:initial_n_results_ui]
@@ -566,6 +592,7 @@ def search(
     current_logit_bias_val: float,
     current_chroma_client,
     verbose_ui: bool,
+    indexed_folders_text: str,
 ):
     start_time = time.time()
     text_query_present = bool(query and query.strip())
@@ -702,12 +729,11 @@ def search(
             for idx_tensor in passing_indices:
                 idx = idx_tensor.item()
                 doc_path = doc_paths_all[idx]
-                try:
-                    gallery_images.append(doc_path)
-                except FileNotFoundError:
+                if os.path.exists(doc_path):
+                    caption = get_relative_caption(doc_path, indexed_folders_text)
+                    gallery_images.append((doc_path, caption))
+                else:
                     print(f"Missing: {doc_path}")
-                except Exception as e:
-                    print(f"Error opening {doc_path}: {e}")
 
             if verbose_ui:
                 for i in range(candidates_count):
@@ -767,14 +793,13 @@ def search(
             temp_results.sort(key=lambda x: x[1], reverse=True)
 
             for doc_path, cos_sim_val in temp_results:
-                try:
-                    gallery_images.append(doc_path)
+                if os.path.exists(doc_path):
+                    caption = get_relative_caption(doc_path, indexed_folders_text)
+                    gallery_images.append((doc_path, caption))
                     if verbose_ui:
                         print(f"✓ {doc_path} (img_cos_sim: {cos_sim_val:.4f})")
-                except FileNotFoundError:
+                else:
                     print(f"Missing: {doc_path}")
-                except Exception as e:
-                    print(f"Error opening {doc_path}: {e}")
 
             if verbose_ui and not gallery_images and doc_paths_all:
                 print("No images passed the image cosine similarity threshold.")
@@ -867,16 +892,15 @@ def search(
         for doc_path, score, ts, Is in final_combined_results_data[
             : int(initial_n_results_ui)
         ]:
-            try:
-                gallery_images.append(doc_path)
+            if os.path.exists(doc_path):
+                caption = get_relative_caption(doc_path, indexed_folders_text)
+                gallery_images.append((doc_path, caption))
                 if verbose_ui:
                     print(
                         f"✓ {doc_path} (comb_score: {score:.4f}, txt_sim: {ts:.4f}, img_sim: {Is:.4f})"
                     )
-            except FileNotFoundError:
+            else:
                 print(f"Missing: {doc_path}")
-            except Exception as e:
-                print(f"Error opening {doc_path}: {e}")
 
         if verbose_ui and not gallery_images and candidate_data:
             print("No candidates passed the combined similarity threshold.")
@@ -914,6 +938,11 @@ def clear_search_and_gallery():
 css_gallary = """
 #gallery .grid-wrap {
     max-height: 900px !important;
+}
+
+/* Hide the caption on the thumbnail grid */
+#gallery .caption-label {
+    display: none !important;
 }
 """
 
@@ -1210,6 +1239,7 @@ if __name__ == "__main__":
                 batch_size_slider,
                 verbose_checkbox,
                 initial_n_results_slider,
+                indexed_folders_display,
             ],
             outputs=[results_gallery],
             show_progress="full",
@@ -1230,6 +1260,7 @@ if __name__ == "__main__":
             logit_bias_state,
             chroma_client_state,
             verbose_checkbox,
+            indexed_folders_display,
         ]
 
         query_textbox.submit(fn=search, inputs=search_inputs, outputs=[results_gallery])
