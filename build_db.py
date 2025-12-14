@@ -8,6 +8,8 @@ import torch
 from model_utils import extract_features, load_model_and_processor
 
 IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"]
+VIDEO_EXTENSIONS = [".mp4", ".mov", ".avi", ".mkv", ".webm"]
+ALL_EXTENSIONS = IMAGE_EXTENSIONS + VIDEO_EXTENSIONS
 
 torch.set_float32_matmul_precision("high")
 
@@ -41,7 +43,7 @@ def process_images(
                 continue
             for root, _, files in os.walk(folder_path):
                 for f_name in files:
-                    if any(f_name.lower().endswith(ext) for ext in IMAGE_EXTENSIONS):
+                    if any(f_name.lower().endswith(ext) for ext in ALL_EXTENSIONS):
                         file_path = os.path.join(root, f_name)
                         all_files_to_add.append(os.path.abspath(file_path))
 
@@ -132,7 +134,7 @@ def process_images(
                 continue
             for root, _, files in os.walk(indexed_folder_path):
                 for f_name in files:
-                    if any(f_name.lower().endswith(ext) for ext in IMAGE_EXTENSIONS):
+                    if any(f_name.lower().endswith(ext) for ext in ALL_EXTENSIONS):
                         file_path = os.path.join(root, f_name)
                         current_filesystem_files.add(os.path.abspath(file_path))
 
@@ -345,7 +347,7 @@ def db_delete_folder(
         files_to_remove_from_db = []
         for root, _, files in os.walk(folder_to_delete_abs):
             for f_name in files:
-                if any(f_name.lower().endswith(ext) for ext in IMAGE_EXTENSIONS):
+                if any(f_name.lower().endswith(ext) for ext in ALL_EXTENSIONS):
                     files_to_remove_from_db.append(
                         os.path.abspath(os.path.join(root, f_name))
                     )

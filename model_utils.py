@@ -1,11 +1,14 @@
 import os
 from concurrent.futures import ThreadPoolExecutor
 
+import cv2
 import numpy as np
 import torch
 import torch.nn.functional as F
 from PIL import Image, UnidentifiedImageError
 from transformers import AutoModel, AutoProcessor
+
+VIDEO_EXTENSIONS_UTILS = [".mp4", ".mov", ".avi", ".mkv", ".webm"]
 
 
 def get_model_type(model_path: str) -> str:
@@ -42,12 +45,34 @@ def load_model_and_processor(model_path: str, device: str, dtype: torch.dtype):
     return model, processor, model_type
 
 
+def _extract_video_frame(path: str) -> Image.Image:
+    """Extracts the first frame from a video file."""
+    cap = cv2.VideoCapture(path)
+    if not cap.isOpened():
+        raise IOError(f"Cannot open video: {path}")
+
+    ret, frame = cap.read()
+    cap.release()
+
+    if not ret or frame is None:
+        raise IOError(f"Could not read frame from video: {path}")
+
+    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    return Image.fromarray(frame_rgb)
+
+
 def _load_and_convert_image(
     path: str,
 ) -> tuple[Image.Image | None, str | None, str | None]:
-    """Helper function to load and convert a single image."""
+    """Helper function to load and convert a single image OR video frame."""
     try:
-        img = Image.open(path).convert("RGB")
+        ext = os.path.splitext(path)[1].lower()
+
+        if ext in VIDEO_EXTENSIONS_UTILS:
+            img = _extract_video_frame(path)
+        else:
+            img = Image.open(path).convert("RGB")
+
         return img, path, None
     except (FileNotFoundError, UnidentifiedImageError, IOError, Exception) as e:
         return None, None, f"Warning: Error processing {path}: {e}"

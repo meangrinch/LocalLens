@@ -1,3 +1,28 @@
+import asyncio
+import sys
+
+# Silence "WinError 10054" console spam
+if sys.platform == "win32":
+    if hasattr(asyncio, "proactor_events"):
+        _ProactorBasePipeTransport = asyncio.proactor_events._ProactorBasePipeTransport
+    else:
+        from asyncio.proactor_events import _ProactorBasePipeTransport
+
+    _original_connection_lost = _ProactorBasePipeTransport._call_connection_lost
+
+    def _safe_connection_lost(self, exc=None):
+        try:
+            _original_connection_lost(self, exc)
+        except ConnectionResetError:
+            pass
+        except OSError as e:
+            if e.winerror == 10054:
+                pass
+            else:
+                raise
+
+    _ProactorBasePipeTransport._call_connection_lost = _safe_connection_lost
+
 import os
 import time
 
