@@ -5,7 +5,6 @@ import chromadb
 import gradio as gr
 import torch
 import torch.nn.functional as F
-from PIL import Image
 
 from build_db import db_add_folders, db_delete_folder, db_update_indexed_folders
 from find_duplicates import find_duplicates_in_folder
@@ -509,11 +508,9 @@ def handle_find_duplicates(
         gallery_images = []
         for _, path1, path2 in pairs:
             try:
-                img1 = Image.open(path1)
-                img2 = Image.open(path2)
-                # Add both images from the pair
-                gallery_images.append((img1, path1))
-                gallery_images.append((img2, path2))
+                # Add both image paths from the pair
+                gallery_images.append(path1)
+                gallery_images.append(path2)
             except FileNotFoundError:
                 print(f"Missing: {path1} or {path2}")
             except Exception as e:
@@ -706,8 +703,7 @@ def search(
                 idx = idx_tensor.item()
                 doc_path = doc_paths_all[idx]
                 try:
-                    img = Image.open(doc_path)
-                    gallery_images.append((img, doc_path))
+                    gallery_images.append(doc_path)
                 except FileNotFoundError:
                     print(f"Missing: {doc_path}")
                 except Exception as e:
@@ -772,8 +768,7 @@ def search(
 
             for doc_path, cos_sim_val in temp_results:
                 try:
-                    img = Image.open(doc_path)
-                    gallery_images.append((img, doc_path))
+                    gallery_images.append(doc_path)
                     if verbose_ui:
                         print(f"✓ {doc_path} (img_cos_sim: {cos_sim_val:.4f})")
                 except FileNotFoundError:
@@ -873,8 +868,7 @@ def search(
             : int(initial_n_results_ui)
         ]:
             try:
-                img = Image.open(doc_path)
-                gallery_images.append((img, doc_path))
+                gallery_images.append(doc_path)
                 if verbose_ui:
                     print(
                         f"✓ {doc_path} (comb_score: {score:.4f}, txt_sim: {ts:.4f}, img_sim: {Is:.4f})"
@@ -1247,4 +1241,10 @@ if __name__ == "__main__":
             outputs=[query_textbox, query_image_input, results_gallery],
         )
 
-    app.launch(inbrowser=True)
+    # Gradio requires explicit permission to pass file paths to the gallery.
+    # Linux/Mac: allow root ("/"), Windows: add drive letters A-Z.
+    allowed_paths = ["/"]
+    if os.name == "nt":
+        allowed_paths = [f"{chr(d)}:\\" for d in range(ord("A"), ord("Z") + 1)]
+
+    app.launch(inbrowser=True, allowed_paths=allowed_paths)
