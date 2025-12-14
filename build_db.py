@@ -39,12 +39,11 @@ def process_images(
             if not os.path.isdir(folder_path):
                 print(f"Warning: Folder not found: {folder_path}")
                 continue
-            for f_name in os.listdir(folder_path):
-                file_path = os.path.join(folder_path, f_name)
-                if os.path.isfile(file_path) and any(
-                    f_name.lower().endswith(ext) for ext in IMAGE_EXTENSIONS
-                ):
-                    all_files_to_add.append(os.path.abspath(file_path))
+            for root, _, files in os.walk(folder_path):
+                for f_name in files:
+                    if any(f_name.lower().endswith(ext) for ext in IMAGE_EXTENSIONS):
+                        file_path = os.path.join(root, f_name)
+                        all_files_to_add.append(os.path.abspath(file_path))
 
         if not all_files_to_add:
             print("No image files found to add")
@@ -131,12 +130,11 @@ def process_images(
             if not os.path.isdir(indexed_folder_path):
                 print(f"Warning: Indexed folder not found: {indexed_folder_path}")
                 continue
-            for f_name in os.listdir(indexed_folder_path):
-                file_path = os.path.join(indexed_folder_path, f_name)
-                if os.path.isfile(file_path) and any(
-                    f_name.lower().endswith(ext) for ext in IMAGE_EXTENSIONS
-                ):
-                    current_filesystem_files.add(os.path.abspath(file_path))
+            for root, _, files in os.walk(indexed_folder_path):
+                for f_name in files:
+                    if any(f_name.lower().endswith(ext) for ext in IMAGE_EXTENSIONS):
+                        file_path = os.path.join(root, f_name)
+                        current_filesystem_files.add(os.path.abspath(file_path))
 
         existing_db_files = set()
         try:
