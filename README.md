@@ -7,7 +7,7 @@ Web application for finding images in your local directories using natural langu
 ## Features
 
 - Index and update local image directories recursively using ChromaDB
-- Perform targeted searches to retrieve relevant images (text only, image only, text + image)
+- Perform targeted searches to retrieve relevant images or videos (text only, image only, text + image)
 - Retrieve duplicate images
 - Display search results in a gallery in order of confidence
 - Web UI (Gradio)
