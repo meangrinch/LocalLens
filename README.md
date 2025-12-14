@@ -2,7 +2,7 @@
 
 Web application for finding images in your local directories using natural language queries or reverse image search. Powered by vision embedding models (e.g., CLIP/SigLIP 2).
 
-<img src="docs/images/example_screenshot.png" alt="Screenshot" width="800">
+<img src="docs/images/example_screenshot.png" alt="Screenshot" width="1000">
 
 ## Features
 
