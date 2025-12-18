@@ -24,6 +24,7 @@ if sys.platform == "win32":
     _ProactorBasePipeTransport._call_connection_lost = _safe_connection_lost
 
 import os
+import random
 import time
 
 import chromadb
@@ -35,10 +36,11 @@ from build_db import db_add_folders, db_delete_folder, db_update_indexed_folders
 from find_duplicates import find_duplicates_in_folder
 from model_utils import load_model_and_processor
 
-__version__ = "1.2.2"
+__version__ = "1.2.3"
 
 # --- Configuration ---
 AVAILABLE_MODELS = [
+    "google/siglip2-giant-opt-patch16-384",
     "google/siglip2-so400m-patch16-512",
     "apple/DFN5B-CLIP-ViT-H-14-378",
     "facebook/metaclip-h14-fullcc2.5b",
@@ -54,6 +56,11 @@ FALLBACK_CLIP_THRESHOLD = 20.0
 FALLBACK_COMBINED_THRESHOLD = 0.45
 FALLBACK_IMAGE_ONLY_THRESHOLD = 0.70
 MODEL_CONFIDENCE_DEFAULTS = {
+    "google/siglip2-giant-opt-patch16-384": {
+        "siglip_thresh": -8.0,
+        "combined_thresh": 0.50,
+        "image_only_thresh": 0.85,
+    },
     "google/siglip2-so400m-patch16-512": {
         "siglip_thresh": -8.0,
         "combined_thresh": 0.50,
@@ -955,6 +962,80 @@ def search(
     return gallery_images
 
 
+def random_search(
+    initial_n_results_ui: int,
+    current_chroma_client,
+    indexed_folders_text: str,
+):
+    """Returns a random selection of images from ChromaDB."""
+    start_time = time.time()
+    gallery_images = []
+
+    if not current_chroma_client:
+        gr.Warning("Database not loaded. Please select a model.")
+        return []
+
+    try:
+        collection = current_chroma_client.get_collection("images")
+    except Exception as e:
+        print(f"Error getting collection: {e}")
+        gr.Info(
+            "Database collection 'images' not found or DB not initialized. "
+            "Ensure `build-db.py` has been run for the selected model and then click 'Update/Sync Active DB'."
+        )
+        return []
+
+    try:
+        # Get all documents from ChromaDB
+        all_results = collection.get(include=["documents"])
+
+        if (
+            not all_results
+            or not all_results.get("documents")
+            or not all_results["documents"]
+        ):
+            gr.Info("No images found in the database.")
+            return []
+
+        all_documents = all_results["documents"]
+        total_count = len(all_documents)
+
+        if total_count == 0:
+            gr.Info("No images found in the database.")
+            return []
+
+        # Randomly sample the requested number of results
+        n_results = min(int(initial_n_results_ui), total_count)
+        sampled_indices = random.sample(range(total_count), n_results)
+
+        print(
+            f"Random search: Sampling {n_results} images from {total_count} total images."
+        )
+
+        for idx in sampled_indices:
+            doc_path = all_documents[idx]
+            if os.path.exists(doc_path):
+                caption = get_relative_caption(doc_path, indexed_folders_text)
+                gallery_images.append((doc_path, caption))
+            else:
+                print(f"Missing: {doc_path}")
+
+        result_count = len(gallery_images)
+        if result_count == 0:
+            print("No valid images found after random sampling.")
+        else:
+            print(f"Returning {result_count} random images.")
+
+        end_time = time.time()
+        print(f"Random search completed in {(end_time - start_time):.2f}s")
+        return gallery_images
+
+    except Exception as e:
+        print(f"Error in random search: {e}")
+        gr.Error(f"Failed to retrieve random images: {e}")
+        return []
+
+
 def clear_search_and_gallery():
     """Clears the search query textbox, image input, and the results gallery."""
     return "", None, []
@@ -1036,6 +1117,10 @@ if __name__ == "__main__":
                 )
                 with gr.Row():
                     search_button = gr.Button("Search", variant="primary", min_width=50)
+                    feeling_lucky_button = gr.Button(
+                        "I'm Feeling Lucky", variant="primary", min_width=50
+                    )
+                with gr.Row():
                     clear_button = gr.Button("Clear", min_width=50)
 
                 gr.Markdown("### Model & Database")
@@ -1104,7 +1189,7 @@ if __name__ == "__main__":
                     clip_thresh_slider = gr.Slider(
                         minimum=0.0,
                         maximum=40.0,
-                        step=0.25,
+                        step=0.1,
                         value=FALLBACK_CLIP_THRESHOLD,
                         label="Logit Confidence Threshold (CLIP)",
                         info="CLIP model confidence. Higher values = more confident.",
@@ -1126,9 +1211,9 @@ if __name__ == "__main__":
                         info="For text + image search. Higher values = more confident.",
                     )
                     batch_size_slider = gr.Slider(
-                        minimum=8,
+                        minimum=4,
                         maximum=256,
-                        step=8,
+                        step=4,
                         value=64,
                         label="Processing Batch Size",
                         info="Images to process in one batch during add/update. Higher = more memory usage.",
@@ -1290,6 +1375,15 @@ if __name__ == "__main__":
 
         query_textbox.submit(fn=search, inputs=search_inputs, outputs=[results_gallery])
         search_button.click(fn=search, inputs=search_inputs, outputs=[results_gallery])
+
+        random_search_inputs = [
+            initial_n_results_slider,
+            chroma_client_state,
+            indexed_folders_display,
+        ]
+        feeling_lucky_button.click(
+            fn=random_search, inputs=random_search_inputs, outputs=[results_gallery]
+        )
 
         clear_button.click(
             fn=clear_search_and_gallery,
