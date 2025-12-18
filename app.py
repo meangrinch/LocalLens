@@ -40,9 +40,9 @@ __version__ = "1.2.3"
 
 # --- Configuration ---
 AVAILABLE_MODELS = [
-    "google/siglip2-giant-opt-patch16-384",
     "google/siglip2-so400m-patch16-512",
     "apple/DFN5B-CLIP-ViT-H-14-378",
+    "google/siglip2-giant-opt-patch16-384",
     "facebook/metaclip-h14-fullcc2.5b",
     "laion/CLIP-ViT-H-14-laion2B-s32B-b79K",
     "openai/clip-vit-large-patch14",
@@ -56,11 +56,6 @@ FALLBACK_CLIP_THRESHOLD = 20.0
 FALLBACK_COMBINED_THRESHOLD = 0.45
 FALLBACK_IMAGE_ONLY_THRESHOLD = 0.70
 MODEL_CONFIDENCE_DEFAULTS = {
-    "google/siglip2-giant-opt-patch16-384": {
-        "siglip_thresh": -8.0,
-        "combined_thresh": 0.50,
-        "image_only_thresh": 0.85,
-    },
     "google/siglip2-so400m-patch16-512": {
         "siglip_thresh": -8.0,
         "combined_thresh": 0.50,
@@ -70,6 +65,11 @@ MODEL_CONFIDENCE_DEFAULTS = {
         "clip_thresh": 3.5,
         "combined_thresh": 0.45,
         "image_only_thresh": 0.70,
+    },
+    "google/siglip2-giant-opt-patch16-384": {
+        "siglip_thresh": -8.0,
+        "combined_thresh": 0.50,
+        "image_only_thresh": 0.85,
     },
     "facebook/metaclip-h14-fullcc2.5b": {
         "clip_thresh": 31.0,
