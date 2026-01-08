@@ -5,6 +5,7 @@ __pycache__/
 /models/
 /venv/
 /.venv/
+start-webui.bat
 /img_db/
 .DS_Store
 Thumbs.db
