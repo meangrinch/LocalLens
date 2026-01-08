@@ -36,7 +36,7 @@ from build_db import db_add_folders, db_delete_folder, db_update_indexed_folders
 from find_duplicates import find_duplicates_in_folder
 from model_utils import load_model_and_processor
 
-__version__ = "1.2.3"
+__version__ = "1.2.4"
 
 # --- Configuration ---
 AVAILABLE_MODELS = [
@@ -88,7 +88,11 @@ MODEL_CONFIDENCE_DEFAULTS = {
     },
 }
 
-device = "cuda" if torch.cuda.is_available() else "cpu"
+device = (
+    "cuda"
+    if torch.cuda.is_available()
+    else "mps" if torch.backends.mps.is_available() else "cpu"
+)
 dtype = torch.float16 if device == "cuda" else torch.float32
 
 
