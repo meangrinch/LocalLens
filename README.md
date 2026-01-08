@@ -19,11 +19,40 @@ Web application for finding images in your local directories using natural langu
 
 ## Install
 
-### Windows Portable
+### Portable Package (Recommended)
 
-Download the standalone zip from the releases page: [Releases](https://github.com/meangrinch/LocalLens/releases)
+Download the standalone zip from the releases page: [Portable Build](https://github.com/meangrinch/LocalLens/releases/tag/portable)
 
-- Pre-downloaded package: Download per version, no setup required, and no included update script. Contains `PyTorch v2.9.1+cu128`.
+**Supported Platforms:**
+
+| Platform              | GPU/Acceleration Support       |
+| --------------------- | ------------------------------ |
+| Windows               | NVIDIA (CUDA), AMD (ROCm), CPU |
+| Linux                 | NVIDIA (CUDA), AMD (ROCm), CPU |
+| macOS (Apple Silicon) | M-Series GPU (MPS), CPU        |
+| macOS (Intel)         | CPU                            |
+
+**Setup:**
+
+1. Extract the zip file
+2. Run the setup script for your platform:
+   - **Windows:** Double-click `setup.bat`
+   - **Linux/macOS:** Run `./setup.sh` in terminal
+3. The setup wizard will:
+   - Detect your GPU and install the appropriate PyTorch version
+   - Install all required dependencies
+   - Create a launcher script (`start-webui.bat` or `start-webui.sh`)
+
+**Requirements:**
+
+- **Windows:** Bundled Python/Git included; no additional requirements
+- **Linux/macOS:** Python 3.10+ and Git must be installed on your system
+
+> [!TIP]
+> In the event that you need to transfer to a fresh portable package:
+>
+> - You can safely move the `img_db` directory to the new portable package
+> - You can likely also move the `runtime` directory over, assuming the same setup configuration is wanted
 
 ### Manual install
 
@@ -75,12 +104,18 @@ Click "Find Duplicates" in the UI with a specified indexed image directory to re
 
 ## Updating
 
-- Windows portable:
-  - Pre-downloaded Package: Download the latest version from the releases page
-- Manual install: from the repo root:
+### Portable Package
+
+- **Windows:** Run `update.bat` from the portable package root
+- **Linux/macOS:** Run `./update.sh` from the portable package root
+
+### Manual Install
+
+From the repo root:
 
 ```bash
 git pull
+pip install -r requirements.txt  # Or activate venv first if present
 ```
 
 ## License & credits
