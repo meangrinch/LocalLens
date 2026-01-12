@@ -15,7 +15,7 @@ Web application for finding images in your local directories using natural langu
 ## Requirements
 
 - Python 3.10+
-- PyTorch (CPU, CUDA, ROCm)
+- PyTorch (CPU, CUDA, ROCm, MPS)
 
 ## Install
 
