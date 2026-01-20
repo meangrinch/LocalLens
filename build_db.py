@@ -5,6 +5,7 @@ import time
 import chromadb
 import torch
 
+from device import get_best_device, get_best_dtype
 from model_utils import extract_features, load_model_and_processor
 
 IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"]
@@ -18,12 +19,8 @@ model = None
 processor = None
 model_type = None
 client = None
-device = (
-    "cuda"
-    if torch.cuda.is_available()
-    else "mps" if torch.backends.mps.is_available() else "cpu"
-)
-dtype = torch.float16 if device == "cuda" else torch.float32
+device = get_best_device()
+dtype = get_best_dtype(device)
 
 
 def process_images(

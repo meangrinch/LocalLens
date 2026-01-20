@@ -79,7 +79,7 @@ def _load_and_convert_image(
 
 
 def extract_features(
-    image_paths_batch: list[str], model, processor, device: str, model_type: str = None
+    image_paths_batch: list[str], model, processor, device, model_type: str = None
 ):
     """
     Extracts features for a batch.
@@ -100,7 +100,9 @@ def extract_features(
             print(error_msg)
 
     if not valid_images_pil:
-        return np.array([]).astype(np.float16 if device == "cuda" else np.float32), []
+        device_type = device.type if hasattr(device, "type") else device
+        use_fp16 = device_type in ("cuda", "xpu")
+        return np.array([]).astype(np.float16 if use_fp16 else np.float32), []
 
     with torch.no_grad():
         # padding=True to prevent crashes with 'naflex' models
@@ -114,7 +116,8 @@ def extract_features(
 
         features_np = image_features.cpu().numpy()
 
-        target_type = np.float16 if device == "cuda" else np.float32
+        device_type = device.type if hasattr(device, "type") else device
+        target_type = np.float16 if device_type in ("cuda", "xpu") else np.float32
         features_np = features_np.astype(target_type)
 
     return features_np, valid_paths
