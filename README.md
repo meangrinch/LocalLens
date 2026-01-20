@@ -15,7 +15,7 @@ Web application for finding images in your local directories using natural langu
 ## Requirements
 
 - Python 3.10+
-- PyTorch (CPU, CUDA, ROCm, MPS)
+- PyTorch (CPU, CUDA, ROCm, MPS, XPU)
 
 ## Install
 
@@ -23,14 +23,10 @@ Web application for finding images in your local directories using natural langu
 
 Download the standalone zip from the releases page: [Portable Build](https://github.com/meangrinch/LocalLens/releases/tag/portable)
 
-**Supported Platforms:**
+**Requirements:**
 
-| Platform              | GPU/Acceleration Support       |
-| --------------------- | ------------------------------ |
-| Windows               | NVIDIA (CUDA), AMD (ROCm), CPU |
-| Linux                 | NVIDIA (CUDA), AMD (ROCm), CPU |
-| macOS (Apple Silicon) | M-Series GPU (MPS), CPU        |
-| macOS (Intel)         | CPU                            |
+- **Windows:** Bundled Python/Git included; no additional requirements
+- **Linux/macOS:** Python 3.10+ and Git must be installed on your system
 
 **Setup:**
 
@@ -43,16 +39,11 @@ Download the standalone zip from the releases page: [Portable Build](https://git
    - Install all required dependencies
    - Create a launcher script (`start-webui.bat` or `start-webui.sh`)
 
-**Requirements:**
-
-- **Windows:** Bundled Python/Git included; no additional requirements
-- **Linux/macOS:** Python 3.10+ and Git must be installed on your system
-
 > [!TIP]
 > In the event that you need to transfer to a fresh portable package:
 >
 > - You can safely move the `img_db` directory to the new portable package
-> - You can likely also move the `runtime` directory over, assuming the same setup configuration is wanted
+> - You might be able to move the `runtime` directory over, assuming the same setup configuration is wanted
 
 ### Manual install
 
