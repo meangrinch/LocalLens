@@ -67,10 +67,10 @@ source venv/bin/activate
 3. Install PyTorch (see: [PyTorch Install](https://pytorch.org/get-started/locally/))
 
 ```bash
-# Example (CUDA 12.8)
-pip install torch==2.9.1+cu128 torchvision==0.24.1+cu128 --extra-index-url https://download.pytorch.org/whl/cu128
+# Example (CUDA 13.0)
+pip install torch==2.9.1+cu130 torchvision==0.24.1+cu130 --extra-index-url https://download.pytorch.org/whl/cu130
 # Example (CPU)
-pip install torch
+pip install torch torchvision
 ```
 
 4. Install dependencies
