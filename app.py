@@ -37,7 +37,7 @@ from device import get_best_device, get_best_dtype
 from find_duplicates import find_duplicates_in_folder
 from model_utils import load_model_and_processor
 
-__version__ = "1.2.5"
+__version__ = "1.2.6"
 
 # --- Configuration ---
 AVAILABLE_MODELS = [
