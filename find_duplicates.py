@@ -2,6 +2,7 @@ import os
 from typing import List, Tuple
 
 import numpy as np
+import torch
 
 from model_utils import extract_features
 
@@ -54,7 +55,7 @@ def compute_embeddings(
     image_paths: List[str],
     model,
     processor,
-    device: str,
+    device: torch.device | str,
     model_type: str,
     batch_size: int,
 ) -> Tuple[np.ndarray, List[str]]:
@@ -145,7 +146,7 @@ def find_duplicates_in_folder(
     active_processor,
     active_model_type: str,
     active_chroma_client,
-    device: str,
+    device: torch.device | str,
 ) -> List[Tuple[float, str, str]]:
     """Find duplicate pairs in a folder using the active model and ChromaDB."""
     directory = os.path.abspath(folder_path)

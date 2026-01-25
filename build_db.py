@@ -29,7 +29,7 @@ def process_images(
     mode="add",
     model_param=None,
     processor_param=None,
-    device_param_ext=None,
+    device=None,
     model_type_param_ext=None,
     progress_callback=None,
     batch_size_param=128,
@@ -82,7 +82,7 @@ def process_images(
                         batch_files,
                         model_param,
                         processor_param,
-                        device_param_ext,
+                        device,
                         model_type_param_ext,
                     )
                     if processed_files:
@@ -185,7 +185,7 @@ def process_images(
                         batch_add_files,
                         model_param,
                         processor_param,
-                        device_param_ext,
+                        device,
                         model_type_param_ext,
                     )
                     if processed_files:
@@ -216,7 +216,7 @@ def db_add_folders(
     collection_obj,
     model_obj,
     processor_obj,
-    device_str: str,
+    device: torch.device,
     model_type_str: str,
     batch_size: int,
     progress_callback=None,
@@ -244,7 +244,7 @@ def db_add_folders(
         mode="add",
         model_param=model_obj,
         processor_param=processor_obj,
-        device_param_ext=device_str,
+        device=device,
         model_type_param_ext=model_type_str,
         progress_callback=progress_callback,
         batch_size_param=batch_size,
@@ -271,7 +271,7 @@ def db_update_indexed_folders(
     collection_obj,
     model_obj,
     processor_obj,
-    device_str: str,
+    device: torch.device,
     model_type_str: str,
     batch_size: int,
 ):
@@ -293,7 +293,7 @@ def db_update_indexed_folders(
                 mode="update",
                 model_param=model_obj,
                 processor_param=processor_obj,
-                device_param_ext=device_str,
+                device=device,
                 model_type_param_ext=model_type_str,
                 batch_size_param=batch_size,
             )
@@ -440,7 +440,7 @@ if __name__ == "__main__":
             collection_obj=collection,
             model_obj=model,
             processor_obj=processor,
-            device_str=device,
+            device=device,
             model_type_str=model_type,
             batch_size=args.batch_size,
         )
@@ -450,7 +450,7 @@ if __name__ == "__main__":
             collection_obj=collection,
             model_obj=model,
             processor_obj=processor,
-            device_str=device,
+            device=device,
             model_type_str=model_type,
             batch_size=args.batch_size,
         )

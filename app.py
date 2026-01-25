@@ -33,6 +33,7 @@ import torch
 import torch.nn.functional as F
 
 from build_db import db_add_folders, db_delete_folder, db_update_indexed_folders
+from device import get_best_device, get_best_dtype
 from find_duplicates import find_duplicates_in_folder
 from model_utils import load_model_and_processor
 
@@ -88,12 +89,8 @@ MODEL_CONFIDENCE_DEFAULTS = {
     },
 }
 
-device = (
-    "cuda"
-    if torch.cuda.is_available()
-    else "mps" if torch.backends.mps.is_available() else "cpu"
-)
-dtype = torch.float16 if device == "cuda" else torch.float32
+device = get_best_device()
+dtype = get_best_dtype(device)
 
 
 def get_simplified_model_identifier(model_path_str: str) -> str:
@@ -312,7 +309,7 @@ def handle_update_sync_button_click(
             collection_obj=active_chroma_client_state_val.get_collection("images"),
             model_obj=active_model_state_val,
             processor_obj=active_processor_state_val,
-            device_str=device,
+            device=device,
             model_type_str=active_model_type_state_val,
             batch_size=batch_size_ui,
         )
@@ -405,7 +402,7 @@ def handle_add_folder_button_click(
             collection_obj=active_chroma_client_state_val.get_collection("images"),
             model_obj=active_model_state_val,
             processor_obj=active_processor_state_val,
-            device_str=device,
+            device=device,
             model_type_str=active_model_type_state_val,
             batch_size=batch_size_ui,
             progress_callback=update_gradio_progress,

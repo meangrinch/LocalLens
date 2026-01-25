@@ -21,7 +21,9 @@ def get_model_type(model_path: str) -> str:
     return "clip"
 
 
-def load_model_and_processor(model_path: str, device: str, dtype: torch.dtype):
+def load_model_and_processor(
+    model_path: str, device: torch.device | str, dtype: torch.dtype
+):
     """
     Loads the appropriate model and processor using Auto classes.
     Returns: (model, processor, model_type_str)
@@ -79,7 +81,11 @@ def _load_and_convert_image(
 
 
 def extract_features(
-    image_paths_batch: list[str], model, processor, device, model_type: str = None
+    image_paths_batch: list[str],
+    model,
+    processor,
+    device: torch.device | str,
+    model_type: str = None,
 ):
     """
     Extracts features for a batch.
@@ -101,7 +107,7 @@ def extract_features(
 
     if not valid_images_pil:
         device_type = device.type if hasattr(device, "type") else device
-        use_fp16 = device_type in ("cuda", "xpu")
+        use_fp16 = device_type != "cpu"
         return np.array([]).astype(np.float16 if use_fp16 else np.float32), []
 
     with torch.no_grad():
@@ -114,10 +120,10 @@ def extract_features(
 
         image_features = F.normalize(image_features, p=2, dim=-1)
 
-        features_np = image_features.cpu().numpy()
+        features_np = image_features.float().cpu().numpy()
 
         device_type = device.type if hasattr(device, "type") else device
-        target_type = np.float16 if device_type in ("cuda", "xpu") else np.float32
+        target_type = np.float16 if device_type != "cpu" else np.float32
         features_np = features_np.astype(target_type)
 
     return features_np, valid_paths
