@@ -37,7 +37,7 @@ from device import get_best_device, get_best_dtype
 from find_duplicates import find_duplicates_in_folder
 from model_utils import load_model_and_processor
 
-__version__ = "1.2.6"
+__version__ = "1.3.0"
 
 # --- Configuration ---
 AVAILABLE_MODELS = [
@@ -479,6 +479,33 @@ def update_duplicate_folder_dropdown(current_db_path: str):
     return gr.Dropdown(choices=folders, value=folders[0] if folders else None)
 
 
+def update_active_folder_dropdown(indexed_folders_text: str):
+    """Updates the active folder dropdown from indexed folders text, with 'All' as default."""
+    if not indexed_folders_text:
+        return gr.Dropdown(choices=[], value=None)
+    folders = [
+        f.strip()
+        for f in indexed_folders_text.split("\n")
+        if f.strip() and os.path.sep in f.strip()
+    ]
+    if not folders:
+        return gr.Dropdown(choices=[], value=None)
+    choices = ["All"] + folders
+    return gr.Dropdown(choices=choices, value="All")
+
+
+def filter_gallery_by_active_folder(gallery_images: list, active_folder: str) -> list:
+    """Filters gallery images to only include those under the active folder."""
+    if not active_folder or active_folder == "All":
+        return gallery_images
+    folder_norm = os.path.normpath(os.path.abspath(active_folder))
+    return [
+        (path, caption)
+        for path, caption in gallery_images
+        if os.path.normpath(os.path.abspath(path)).startswith(folder_norm)
+    ]
+
+
 def get_relative_caption(abs_path: str, indexed_folders_text: str) -> str:
     """Returns the path relative to the indexed parent folder."""
     if not abs_path:
@@ -626,6 +653,7 @@ def search(
     current_chroma_client,
     verbose_ui: bool,
     indexed_folders_text: str,
+    active_folder: str = "All",
 ):
     start_time = time.time()
     text_query_present = bool(query and query.strip())
@@ -952,6 +980,8 @@ def search(
                     f"✗ {doc_path} (comb: {combined_score:.4f}, txt: {text_sim:.4f}, img: {image_sim:.4f})"
                 )
 
+    gallery_images = filter_gallery_by_active_folder(gallery_images, active_folder)
+
     result_count = len(gallery_images)
     if result_count == 0:
         print("No images found matching the criteria.")
@@ -967,6 +997,7 @@ def random_search(
     initial_n_results_ui: int,
     current_chroma_client,
     indexed_folders_text: str,
+    active_folder: str = "All",
 ):
     """Returns a random selection of images from ChromaDB."""
     start_time = time.time()
@@ -1020,6 +1051,8 @@ def random_search(
                 gallery_images.append((doc_path, caption))
             else:
                 print(f"Missing: {doc_path}")
+
+        gallery_images = filter_gallery_by_active_folder(gallery_images, active_folder)
 
         result_count = len(gallery_images)
         if result_count == 0:
@@ -1132,11 +1165,17 @@ if __name__ == "__main__":
                     allow_custom_value=True,
                 )
                 with gr.Accordion("Database Management", open=False):
+                    active_folder_dropdown = gr.Dropdown(
+                        label="Active Folder",
+                        choices=["All"],
+                        value="All",
+                        info="Limit searches to a specific indexed folder.",
+                    )
                     indexed_folders_display = gr.Textbox(
                         label="Indexed Folders", interactive=False, lines=3, max_lines=5
                     )
                     update_db_button = gr.Button(
-                        "Full Update/Sync Active DB", variant="primary"
+                        "Update/Sync Full DB", variant="primary"
                     )
 
                     new_folder_textbox = gr.Textbox(
@@ -1260,15 +1299,21 @@ if __name__ == "__main__":
                 return gr.Dropdown(choices=[], value=None)
             return gr.Dropdown(choices=folders, value=folders[0] if folders else None)
 
+        def update_all_folder_dropdowns(indexed_folders_text: str):
+            """Update both active folder and duplicate folder dropdowns."""
+            active_update = update_active_folder_dropdown(indexed_folders_text)
+            dup_update = update_dropdown_from_indexed_folders(indexed_folders_text)
+            return active_update, dup_update
+
         app.load(
             fn=load_and_switch_model_db,
             inputs=[active_model_path_state],
             outputs=load_outputs,
             show_progress="full",
         ).then(
-            fn=update_dropdown_from_indexed_folders,
+            fn=update_all_folder_dropdowns,
             inputs=[indexed_folders_display],
-            outputs=[duplicate_folder_dropdown],
+            outputs=[active_folder_dropdown, duplicate_folder_dropdown],
         )
 
         model_dropdown.change(
@@ -1277,9 +1322,9 @@ if __name__ == "__main__":
             outputs=load_outputs,
             show_progress="full",
         ).then(
-            fn=update_dropdown_from_indexed_folders,
+            fn=update_all_folder_dropdowns,
             inputs=[indexed_folders_display],
-            outputs=[duplicate_folder_dropdown],
+            outputs=[active_folder_dropdown, duplicate_folder_dropdown],
         )
 
         update_db_button.click(
@@ -1298,20 +1343,20 @@ if __name__ == "__main__":
         )
 
         def handle_add_folder_with_dropdown_update(*args):
-            """Wrapper to update both indexed folders display and duplicate dropdown."""
+            """Wrapper to update indexed folders display and all folder dropdowns."""
             indexed_folders_result = handle_add_folder_button_click(*args)
-            dropdown_update = update_dropdown_from_indexed_folders(
+            active_update, dup_update = update_all_folder_dropdowns(
                 indexed_folders_result
             )
-            return indexed_folders_result, dropdown_update
+            return indexed_folders_result, active_update, dup_update
 
         def handle_delete_folder_with_dropdown_update(*args):
-            """Wrapper to update both indexed folders display and duplicate dropdown."""
+            """Wrapper to update indexed folders display and all folder dropdowns."""
             indexed_folders_result = handle_delete_folder_button_click(*args)
-            dropdown_update = update_dropdown_from_indexed_folders(
+            active_update, dup_update = update_all_folder_dropdowns(
                 indexed_folders_result
             )
-            return indexed_folders_result, dropdown_update
+            return indexed_folders_result, active_update, dup_update
 
         add_folder_button.click(
             fn=handle_add_folder_with_dropdown_update,
@@ -1325,14 +1370,22 @@ if __name__ == "__main__":
                 chroma_client_state,
                 batch_size_slider,
             ],
-            outputs=[indexed_folders_display, duplicate_folder_dropdown],
+            outputs=[
+                indexed_folders_display,
+                active_folder_dropdown,
+                duplicate_folder_dropdown,
+            ],
             show_progress="full",
         )
 
         delete_folder_button.click(
             fn=handle_delete_folder_with_dropdown_update,
             inputs=[new_folder_textbox, active_db_path_state, chroma_client_state],
-            outputs=[indexed_folders_display, duplicate_folder_dropdown],
+            outputs=[
+                indexed_folders_display,
+                active_folder_dropdown,
+                duplicate_folder_dropdown,
+            ],
             show_progress="full",
         )
 
@@ -1372,6 +1425,7 @@ if __name__ == "__main__":
             chroma_client_state,
             verbose_checkbox,
             indexed_folders_display,
+            active_folder_dropdown,
         ]
 
         query_textbox.submit(fn=search, inputs=search_inputs, outputs=[results_gallery])
@@ -1381,6 +1435,7 @@ if __name__ == "__main__":
             initial_n_results_slider,
             chroma_client_state,
             indexed_folders_display,
+            active_folder_dropdown,
         ]
         feeling_lucky_button.click(
             fn=random_search, inputs=random_search_inputs, outputs=[results_gallery]
