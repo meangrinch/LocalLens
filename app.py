@@ -37,7 +37,7 @@ from device import get_best_device, get_best_dtype
 from find_duplicates import find_duplicates_in_folder
 from model_utils import load_model_and_processor
 
-__version__ = "1.3.0"
+__version__ = "1.3.1"
 
 # --- Configuration ---
 AVAILABLE_MODELS = [
@@ -729,15 +729,22 @@ def search(
     if text_query_present and not image_query_present:
         print("Search Mode: TEXT")
         try:
-            query_results = collection.query(
-                query_embeddings=text_emb_normalized_float32.cpu().squeeze(0).numpy(),
-                n_results=int(initial_n_results_ui),
-                include=[
+            query_kwargs = {
+                "query_embeddings": text_emb_normalized_float32.cpu()
+                .squeeze(0)
+                .numpy(),
+                "n_results": int(initial_n_results_ui),
+                "include": [
                     "documents",
                     "embeddings",
                     "distances",
                 ],  # Distances for CLIP, embeddings for SigLIP logit calc
-            )
+            }
+            if active_folder and active_folder != "All":
+                folder_norm = os.path.normpath(os.path.abspath(active_folder))
+                query_kwargs["where_document"] = {"$contains": folder_norm}
+
+            query_results = collection.query(**query_kwargs)
         except Exception as e:
             print(f"ChromaDB query error (Text): {e}")
             gr.Warning(f"Error searching images: {e}")
@@ -811,11 +818,18 @@ def search(
     elif image_query_present and not text_query_present:
         print("Search Mode: IMAGE")
         try:
-            query_results = collection.query(
-                query_embeddings=image_emb_normalized_float32.cpu().squeeze(0).numpy(),
-                n_results=int(initial_n_results_ui),
-                include=["documents", "embeddings"],
-            )
+            query_kwargs = {
+                "query_embeddings": image_emb_normalized_float32.cpu()
+                .squeeze(0)
+                .numpy(),
+                "n_results": int(initial_n_results_ui),
+                "include": ["documents", "embeddings"],
+            }
+            if active_folder and active_folder != "All":
+                folder_norm = os.path.normpath(os.path.abspath(active_folder))
+                query_kwargs["where_document"] = {"$contains": folder_norm}
+
+            query_results = collection.query(**query_kwargs)
         except Exception as e:
             print(f"ChromaDB query error (Image): {e}")
             gr.Warning(f"Error searching images: {e}")
@@ -871,13 +885,25 @@ def search(
 
     elif text_query_present and image_query_present:
         print("Search Mode: COMBINED")
+
+        where_document_clause = None
+        if active_folder and active_folder != "All":
+            folder_norm = os.path.normpath(os.path.abspath(active_folder))
+            where_document_clause = {"$contains": folder_norm}
+
         # 1. Text Search Leg
         try:
-            text_query_results = collection.query(
-                query_embeddings=text_emb_normalized_float32.cpu().squeeze(0).numpy(),
-                n_results=int(initial_n_results_ui),
-                include=["documents", "embeddings"],
-            )
+            text_query_kwargs = {
+                "query_embeddings": text_emb_normalized_float32.cpu()
+                .squeeze(0)
+                .numpy(),
+                "n_results": int(initial_n_results_ui),
+                "include": ["documents", "embeddings"],
+            }
+            if where_document_clause:
+                text_query_kwargs["where_document"] = where_document_clause
+
+            text_query_results = collection.query(**text_query_kwargs)
         except Exception as e:
             print(f"ChromaDB query error (Combined - Text Leg): {e}")
             gr.Warning(f"Error in combined search (text leg): {e}")
@@ -885,11 +911,17 @@ def search(
 
         # 2. Image Search Leg
         try:
-            image_query_results = collection.query(
-                query_embeddings=image_emb_normalized_float32.cpu().squeeze(0).numpy(),
-                n_results=int(initial_n_results_ui),
-                include=["documents", "embeddings"],
-            )
+            image_query_kwargs = {
+                "query_embeddings": image_emb_normalized_float32.cpu()
+                .squeeze(0)
+                .numpy(),
+                "n_results": int(initial_n_results_ui),
+                "include": ["documents", "embeddings"],
+            }
+            if where_document_clause:
+                image_query_kwargs["where_document"] = where_document_clause
+
+            image_query_results = collection.query(**image_query_kwargs)
         except Exception as e:
             print(f"ChromaDB query error (Combined - Image Leg): {e}")
             gr.Warning(f"Error in combined search (image leg): {e}")
@@ -1019,7 +1051,12 @@ def random_search(
 
     try:
         # Get all documents from ChromaDB
-        all_results = collection.get(include=["documents"])
+        get_kwargs = {"include": ["documents"]}
+        if active_folder and active_folder != "All":
+            folder_norm = os.path.normpath(os.path.abspath(active_folder))
+            get_kwargs["where_document"] = {"$contains": folder_norm}
+
+        all_results = collection.get(**get_kwargs)
 
         if (
             not all_results
