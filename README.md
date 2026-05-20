@@ -4,6 +4,16 @@ Web application for finding images in your local directories using natural langu
 
 <img src="docs/images/example_screenshot.png" alt="Screenshot" width="1000">
 
+## Table of Contents
+
+- [Features](#features)
+- [Requirements](#requirements)
+- [Install](#install)
+- [Usage](#usage)
+- [Documentation](#documentation)
+- [Updating](#updating)
+- [License & Credits](#license--credits)
+
 ## Features
 
 - Index and update local image directories recursively using ChromaDB
@@ -96,6 +106,10 @@ pip install -r requirements.txt
 ### Find duplicates
 
 Click "Find Duplicates" in the UI with a specified indexed image directory to return similar matching images pairs.
+
+## Documentation
+
+- [Hardware Requirements](docs/HARDWARE_REQUIREMENTS.md)
 
 ## Updating
 
