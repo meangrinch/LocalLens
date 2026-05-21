@@ -7,6 +7,7 @@ __pycache__/
 /.venv/
 start-webui.bat
 /img_db/
+/tests/
 .DS_Store
 Thumbs.db
 /.vscode/

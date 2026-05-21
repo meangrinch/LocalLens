@@ -6,21 +6,109 @@ import chromadb
 import torch
 
 from device import get_best_device, get_best_dtype
+from index_store import (
+    IndexStore,
+    batched,
+    build_media_records,
+    canonical_path,
+    migrate_legacy_db,
+    path_key,
+    write_indexed_folders_mirror,
+)
 from model_utils import extract_features, load_model_and_processor
-
-IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"]
-VIDEO_EXTENSIONS = [".mp4", ".mov", ".avi", ".mkv", ".webm"]
-ALL_EXTENSIONS = IMAGE_EXTENSIONS + VIDEO_EXTENSIONS
 
 torch.set_float32_matmul_precision("high")
 
-# Global variables for model and client, to be initialized in main
 model = None
 processor = None
 model_type = None
 client = None
 device = get_best_device()
 dtype = get_best_dtype(device)
+
+
+def _emit_progress(progress_callback, status: str, **kwargs) -> None:
+    if progress_callback:
+        progress_callback(status=status, **kwargs)
+
+
+def _delete_chroma_ids(collection, media_ids: list[str]) -> None:
+    for batch in batched(media_ids, 500):
+        try:
+            collection.delete(ids=batch)
+        except Exception as e:
+            print(f"Error deleting batch: {e}")
+
+
+def _store_processed_records(db_path_str: str, records) -> None:
+    IndexStore(db_path_str).upsert_media_records(list(records))
+
+
+def _upsert_records_with_store(
+    db_path_str: str,
+    records,
+    collection,
+    model_param,
+    processor_param,
+    device,
+    model_type_param_ext,
+    batch_size_param: int,
+    progress_callback=None,
+) -> int:
+    if not records:
+        return 0
+
+    record_by_key = {record.path_key: record for record in records}
+    processed_records = []
+    processed_count = 0
+    total_batches = (len(records) + batch_size_param - 1) // batch_size_param
+
+    for batch_number, batch_records in enumerate(
+        batched(records, batch_size_param), start=1
+    ):
+        batch_paths = [record.path for record in batch_records]
+        try:
+            batch_embeddings, processed_files = extract_features(
+                batch_paths,
+                model_param,
+                processor_param,
+                device,
+                model_type_param_ext,
+            )
+            if not processed_files:
+                print(f"Batch failed: {len(batch_paths)} files could not be processed")
+                continue
+
+            batch_processed_records = [
+                record_by_key[path_key(path)] for path in processed_files
+            ]
+            collection.upsert(
+                embeddings=batch_embeddings,
+                documents=[record.path for record in batch_processed_records],
+                ids=[record.media_id for record in batch_processed_records],
+                metadatas=[record.to_metadata() for record in batch_processed_records],
+            )
+        except Exception as e:
+            print(f"Error processing batch: {e}")
+            continue
+
+        processed_records.extend(batch_processed_records)
+        processed_count += len(batch_processed_records)
+        print(
+            f"Batch {batch_number}/{total_batches}: {len(batch_processed_records)} images done."
+        )
+        _emit_progress(
+            progress_callback,
+            "batch_processed",
+            current_batch_num=batch_number,
+            total_batches=total_batches,
+            images_in_batch=len(batch_processed_records),
+            cumulative_processed_this_run=processed_count,
+            total_images_to_process=len(records),
+        )
+
+    _store_processed_records(db_path_str, processed_records)
+    return processed_count
 
 
 def process_images(
@@ -33,181 +121,99 @@ def process_images(
     model_type_param_ext=None,
     progress_callback=None,
     batch_size_param=128,
+    db_path_str: str | None = None,
 ):
+    if not db_path_str:
+        raise ValueError("db_path_str is required for indexed processing.")
+
+    migrate_legacy_db(db_path_str, collection)
+    store = IndexStore(db_path_str)
+
     if mode == "add":
         print(f"Adding folders: {', '.join(folders)}")
-        all_files_to_add = []
+        records_to_embed = []
         for folder_arg in folders:
-            folder_path = os.path.abspath(folder_arg)
+            folder_path = canonical_path(folder_arg)
             if not os.path.isdir(folder_path):
                 print(f"Warning: Folder not found: {folder_path}")
                 continue
-            for root, _, files in os.walk(folder_path):
-                for f_name in files:
-                    if any(f_name.lower().endswith(ext) for ext in ALL_EXTENSIONS):
-                        file_path = os.path.join(root, f_name)
-                        all_files_to_add.append(os.path.abspath(file_path))
+            store.upsert_folder(folder_path)
+            folder_records = build_media_records(folder_path)
+            records_to_embed.extend(store.records_needing_embedding(folder_records))
 
-        if not all_files_to_add:
-            print("No image files found to add")
-            if progress_callback:
-                progress_callback(
-                    status="start_processing",
-                    folders_being_processed=folders,
-                    total_images_to_process=0,
-                )
-                progress_callback(status="all_batches_done", total_successfully_added=0)
-        else:
-            print(f"Processing {len(all_files_to_add)} images...")
-            if progress_callback:
-                progress_callback(
-                    status="start_processing",
-                    folders_being_processed=folders,
-                    total_images_to_process=len(all_files_to_add),
-                )
+        _emit_progress(
+            progress_callback,
+            "start_processing",
+            folders_being_processed=folders,
+            total_images_to_process=len(records_to_embed),
+        )
 
-            batch_size = batch_size_param
-            processed_count = 0
-            total_batches = (
-                (len(all_files_to_add) + batch_size - 1) // batch_size
-                if all_files_to_add
-                else 0
+        if not records_to_embed:
+            print("No new or changed media files found to add")
+            _emit_progress(
+                progress_callback, "all_batches_done", total_successfully_added=0
             )
-            current_batch_num = 0
-            for i in range(0, len(all_files_to_add), batch_size):
-                current_batch_num += 1
-                batch_files = all_files_to_add[i : i + batch_size]
-                try:
-                    batch_embeddings, processed_files = extract_features(
-                        batch_files,
-                        model_param,
-                        processor_param,
-                        device,
-                        model_type_param_ext,
-                    )
-                    if processed_files:
-                        collection.add(
-                            embeddings=batch_embeddings,
-                            documents=processed_files,
-                            ids=processed_files,
-                        )
-                        processed_count += len(processed_files)
-                        print(
-                            f"Batch {current_batch_num}/{total_batches}: {len(processed_files)} images done."
-                        )
-                        if progress_callback:
-                            progress_callback(
-                                status="batch_processed",
-                                current_batch_num=current_batch_num,
-                                total_batches=total_batches,
-                                images_in_batch=len(processed_files),
-                                cumulative_processed_this_run=processed_count,
-                                total_images_to_process=len(all_files_to_add),
-                            )
-                    elif batch_files:
-                        print(
-                            f"Batch failed: {len(batch_files)} files could not be processed"
-                        )
-                except Exception as e:
-                    print(f"Error processing batch: {e}")
-            if processed_count > 0:
-                print(f"Successfully added {processed_count} images")
-                if progress_callback:
-                    progress_callback(
-                        status="all_batches_done",
-                        total_successfully_added=processed_count,
-                    )
-            elif not all_files_to_add and progress_callback:
-                progress_callback(status="all_batches_done", total_successfully_added=0)
-            elif progress_callback:
-                progress_callback(
-                    status="all_batches_done", total_successfully_added=processed_count
-                )
+            return
+
+        print(f"Processing {len(records_to_embed)} images...")
+        processed_count = _upsert_records_with_store(
+            db_path_str,
+            records_to_embed,
+            collection,
+            model_param,
+            processor_param,
+            device,
+            model_type_param_ext,
+            batch_size_param,
+            progress_callback,
+        )
+        print(f"Successfully added or updated {processed_count} images")
+        _emit_progress(
+            progress_callback,
+            "all_batches_done",
+            total_successfully_added=processed_count,
+        )
 
     elif mode == "update":
         print("Updating database...")
-
-        current_filesystem_files = set()
-        for indexed_folder_path_arg in folders:
-            indexed_folder_path = os.path.abspath(indexed_folder_path_arg)
-            if not os.path.isdir(indexed_folder_path):
-                print(f"Warning: Indexed folder not found: {indexed_folder_path}")
+        total_added = 0
+        total_deleted = 0
+        for folder_arg in folders:
+            folder_path = canonical_path(folder_arg)
+            store.upsert_folder(folder_path)
+            if not os.path.isdir(folder_path):
+                print(f"Warning: Indexed folder not found: {folder_path}")
                 continue
-            for root, _, files in os.walk(indexed_folder_path):
-                for f_name in files:
-                    if any(f_name.lower().endswith(ext) for ext in ALL_EXTENSIONS):
-                        file_path = os.path.join(root, f_name)
-                        current_filesystem_files.add(os.path.abspath(file_path))
 
-        existing_db_files = set()
-        try:
-            db_content = collection.get(include=["documents"])
-            if db_content and db_content["documents"] is not None:
-                existing_db_files = set(
-                    os.path.abspath(doc) for doc in db_content["documents"]
+            filesystem_records = build_media_records(folder_path)
+            filesystem_ids = {record.media_id for record in filesystem_records}
+            stored_records = store.get_media_by_folder(folder_path)
+            stored_ids = {record.media_id for record in stored_records}
+            stale_ids = sorted(stored_ids - filesystem_ids)
+            if stale_ids:
+                print(f"Deleting {len(stale_ids)} stale images...")
+                _delete_chroma_ids(collection, stale_ids)
+                store.delete_media_ids(stale_ids)
+                total_deleted += len(stale_ids)
+
+            records_to_embed = store.records_needing_embedding(filesystem_records)
+            if records_to_embed:
+                print(f"Adding {len(records_to_embed)} images...")
+                total_added += _upsert_records_with_store(
+                    db_path_str,
+                    records_to_embed,
+                    collection,
+                    model_param,
+                    processor_param,
+                    device,
+                    model_type_param_ext,
+                    batch_size_param,
                 )
-        except Exception as e:
-            print(f"Error fetching from database: {e}")
-            return
 
-        files_to_add = list(current_filesystem_files - existing_db_files)
-        files_to_delete = list(existing_db_files - current_filesystem_files)
-
-        print(
-            f"Found {len(current_filesystem_files)} files in filesystem, {len(existing_db_files)} in database"
-        )
-
-        if files_to_delete:
-            print(f"Deleting {len(files_to_delete)} stale images...")
-            delete_batch_size = 500
-            for i in range(0, len(files_to_delete), delete_batch_size):
-                batch_delete_ids = files_to_delete[i : i + delete_batch_size]
-                try:
-                    collection.delete(ids=batch_delete_ids)
-                except Exception as e:
-                    print(f"Error deleting batch: {e}")
-
-        if files_to_add:
-            print(f"Adding {len(files_to_add)} new images...")
-            add_batch_size = batch_size_param
-            processed_count = 0
-            total_batches = (
-                (len(files_to_add) + add_batch_size - 1) // add_batch_size
-                if files_to_add
-                else 0
-            )
-            current_batch_num = 0
-            for i in range(0, len(files_to_add), add_batch_size):
-                current_batch_num += 1
-                batch_add_files = files_to_add[i : i + add_batch_size]
-                try:
-                    batch_embeddings, processed_files = extract_features(
-                        batch_add_files,
-                        model_param,
-                        processor_param,
-                        device,
-                        model_type_param_ext,
-                    )
-                    if processed_files:
-                        collection.upsert(
-                            embeddings=batch_embeddings,
-                            documents=processed_files,
-                            ids=processed_files,
-                        )
-                        processed_count += len(processed_files)
-                        print(
-                            f"Batch {current_batch_num}/{total_batches}: {len(processed_files)} images done."
-                        )
-                    elif batch_add_files:
-                        print(
-                            f"Batch failed: {len(batch_add_files)} files could not be processed"
-                        )
-                except Exception as e:
-                    print(f"Error processing batch: {e}")
-            if processed_count > 0:
-                print(f"Successfully added {processed_count} new images")
-        else:
+        if total_added == 0 and total_deleted == 0:
             print("Database is up to date")
+        else:
+            print(f"Update complete: {total_added} added, {total_deleted} deleted")
 
 
 def db_add_folders(
@@ -221,22 +227,10 @@ def db_add_folders(
     batch_size: int,
     progress_callback=None,
 ):
-    """Adds specified folders to the database and updates the index file."""
     start_time = time.time()
-    indexed_folders_file_path = os.path.join(db_path_str, "indexed_folders.txt")
-    ensure_file_exists(indexed_folders_file_path)
-
-    current_indexed_folders = set()
-    if (
-        os.path.exists(indexed_folders_file_path)
-        and os.path.getsize(indexed_folders_file_path) > 0
-    ):
-        with open(indexed_folders_file_path, "r") as f:
-            current_indexed_folders = set(line.strip() for line in f if line.strip())
-
-    folders_to_actually_add_to_txt = [
-        f for f in folders_to_process if f not in current_indexed_folders
-    ]
+    migrate_legacy_db(db_path_str, collection_obj)
+    store = IndexStore(db_path_str)
+    before_folders = set(store.list_folders())
 
     process_images(
         folders_to_process,
@@ -248,22 +242,24 @@ def db_add_folders(
         model_type_param_ext=model_type_str,
         progress_callback=progress_callback,
         batch_size_param=batch_size,
+        db_path_str=db_path_str,
     )
 
-    if folders_to_actually_add_to_txt:
-        with open(indexed_folders_file_path, "a") as f:
-            if current_indexed_folders:
-                f.write("\n")
-            f.write("\n".join(folders_to_actually_add_to_txt))
-        print(f"Added {len(folders_to_actually_add_to_txt)} folders to index file")
+    folders = store.list_folders()
+    write_indexed_folders_mirror(db_path_str, folders)
+    added_folders = set(folders) - before_folders
+    if added_folders:
+        print(f"Added {len(added_folders)} folders to index")
     else:
         print("Folders already indexed")
+
     end_time = time.time()
     print(f"Add folder completed in {(end_time - start_time):.2f}s")
-    if progress_callback:
-        progress_callback(
-            status="add_folder_completed", duration_seconds=(end_time - start_time)
-        )
+    _emit_progress(
+        progress_callback,
+        "add_folder_completed",
+        duration_seconds=(end_time - start_time),
+    )
 
 
 def db_update_indexed_folders(
@@ -275,32 +271,25 @@ def db_update_indexed_folders(
     model_type_str: str,
     batch_size: int,
 ):
-    """Updates the database by rescanning folders listed in the index file."""
     start_time = time.time()
-    indexed_folders_file_path = os.path.join(db_path_str, "indexed_folders.txt")
-    ensure_file_exists(indexed_folders_file_path)
-
-    if (
-        os.path.exists(indexed_folders_file_path)
-        and os.path.getsize(indexed_folders_file_path) > 0
-    ):
-        with open(indexed_folders_file_path, "r") as f:
-            indexed_folders = [line.strip() for line in f if line.strip()]
-        if indexed_folders:
-            process_images(
-                indexed_folders,
-                collection_obj,
-                mode="update",
-                model_param=model_obj,
-                processor_param=processor_obj,
-                device=device,
-                model_type_param_ext=model_type_str,
-                batch_size_param=batch_size,
-            )
-        else:
-            print("No folders in index file to update")
+    migrate_legacy_db(db_path_str, collection_obj)
+    store = IndexStore(db_path_str)
+    indexed_folders = store.list_folders()
+    if indexed_folders:
+        process_images(
+            indexed_folders,
+            collection_obj,
+            mode="update",
+            model_param=model_obj,
+            processor_param=processor_obj,
+            device=device,
+            model_type_param_ext=model_type_str,
+            batch_size_param=batch_size,
+            db_path_str=db_path_str,
+        )
+        write_indexed_folders_mirror(db_path_str, store.list_folders())
     else:
-        print("Index file empty - nothing to update")
+        print("Index empty - nothing to update")
     end_time = time.time()
     print(f"Update completed in {(end_time - start_time):.2f}s")
 
@@ -308,63 +297,18 @@ def db_update_indexed_folders(
 def db_delete_folder(
     folder_to_delete_str: str, db_path_str: str, collection_obj
 ) -> bool:
-    """
-    Deletes a folder from the index file and removes its images from the database.
-    Returns True if any action was taken (folder removed from index or images deleted), False otherwise.
-    """
     start_time = time.time()
-    action_taken = False
-    folder_to_delete_abs = os.path.abspath(folder_to_delete_str)
-    indexed_folders_file_path = os.path.join(db_path_str, "indexed_folders.txt")
-    ensure_file_exists(indexed_folders_file_path)
-
-    # Remove from indexed_folders.txt
-    raw_indexed_folders_read = []
-    if (
-        os.path.exists(indexed_folders_file_path)
-        and os.path.getsize(indexed_folders_file_path) > 0
-    ):
-        with open(indexed_folders_file_path, "r") as f:
-            raw_indexed_folders_read = [line.strip() for line in f if line.strip()]
-
-    final_folders_to_write = []
-    folder_was_found_for_removal = False
-    for raw_path in raw_indexed_folders_read:
-        if os.path.abspath(raw_path) == folder_to_delete_abs:
-            folder_was_found_for_removal = True
-        else:
-            final_folders_to_write.append(raw_path)
-
-    if folder_was_found_for_removal:
-        with open(indexed_folders_file_path, "w") as f:
-            f.write("\n".join(final_folders_to_write))
-        print(f"Removed folder from index: {os.path.basename(folder_to_delete_abs)}")
-        action_taken = True
-
-    # Remove images from ChromaDB
-    if not os.path.isdir(folder_to_delete_abs):
-        print(f"Folder not found on disk: {folder_to_delete_abs}")
+    migrate_legacy_db(db_path_str, collection_obj)
+    store = IndexStore(db_path_str)
+    action_taken, media_ids = store.delete_folder(folder_to_delete_str)
+    if media_ids:
+        _delete_chroma_ids(collection_obj, media_ids)
+        print(f"Successfully removed {len(media_ids)} images from database")
+    if action_taken:
+        print(f"Removed folder from index: {os.path.basename(folder_to_delete_str)}")
     else:
-        files_to_remove_from_db = []
-        for root, _, files in os.walk(folder_to_delete_abs):
-            for f_name in files:
-                if any(f_name.lower().endswith(ext) for ext in ALL_EXTENSIONS):
-                    files_to_remove_from_db.append(
-                        os.path.abspath(os.path.join(root, f_name))
-                    )
-
-        if files_to_remove_from_db:
-            action_taken = True
-            try:
-                collection_obj.delete(ids=files_to_remove_from_db)
-                print(
-                    f"Successfully removed {len(files_to_remove_from_db)} images from database"
-                )
-            except Exception as e:
-                print(f"Error removing images from database: {e}")
-        else:
-            print("No images found to remove")
-
+        print(f"Folder not found in index: {folder_to_delete_str}")
+    write_indexed_folders_mirror(db_path_str, store.list_folders())
     end_time = time.time()
     print(f"Delete folder completed in {(end_time - start_time):.2f}s")
     return action_taken
@@ -420,10 +364,7 @@ if __name__ == "__main__":
     print(f"Initializing ChromaDB: {args.db_path}")
     client = chromadb.PersistentClient(path=args.db_path)
 
-    indexed_folders_file_path = os.path.join(args.db_path, "indexed_folders.txt")
-    ensure_file_exists(indexed_folders_file_path)
     collection_name = "images"
-
     try:
         collection = client.get_collection(name=collection_name)
         print(f"Using existing collection: '{collection_name}'")
@@ -432,6 +373,8 @@ if __name__ == "__main__":
             name=collection_name, metadata={"hnsw:space": "cosine"}
         )
         print(f"Created collection: '{collection_name}'")
+
+    migrate_legacy_db(args.db_path, collection)
 
     if args.add:
         db_add_folders(

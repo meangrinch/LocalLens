@@ -9,6 +9,7 @@ from PIL import Image, UnidentifiedImageError
 from transformers import AutoModel, AutoProcessor
 
 VIDEO_EXTENSIONS_UTILS = [".mp4", ".mov", ".avi", ".mkv", ".webm"]
+TRUST_REMOTE_MODEL_CODE = True
 
 
 def get_model_type(model_path: str) -> str:
@@ -22,7 +23,9 @@ def get_model_type(model_path: str) -> str:
 
 
 def load_model_and_processor(
-    model_path: str, device: torch.device | str, dtype: torch.dtype
+    model_path: str,
+    device: torch.device | str,
+    dtype: torch.dtype,
 ):
     """
     Loads the appropriate model and processor using Auto classes.
@@ -32,14 +35,17 @@ def load_model_and_processor(
 
     model = (
         AutoModel.from_pretrained(
-            model_path, torch_dtype=dtype, trust_remote_code=True, use_safetensors=True
+            model_path,
+            torch_dtype=dtype,
+            trust_remote_code=TRUST_REMOTE_MODEL_CODE,
+            use_safetensors=True,
         )
         .to(device)
         .eval()
     )
 
     processor = AutoProcessor.from_pretrained(
-        model_path, use_fast=True, trust_remote_code=True
+        model_path, use_fast=True, trust_remote_code=TRUST_REMOTE_MODEL_CODE
     )
 
     model_type = get_model_type(model_path)

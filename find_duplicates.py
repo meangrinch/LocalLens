@@ -4,6 +4,7 @@ from typing import List, Tuple
 import numpy as np
 import torch
 
+from index_store import IndexStore, build_media_record, canonical_path
 from model_utils import extract_features
 
 IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"]
@@ -27,6 +28,7 @@ def list_image_files(directory_path: str, recursive: bool) -> List[str]:
                     image_paths.append(os.path.abspath(file_path))
         except FileNotFoundError:
             return []
+    image_paths.sort()
     return image_paths
 
 
@@ -146,10 +148,11 @@ def find_duplicates_in_folder(
     active_processor,
     active_model_type: str,
     active_chroma_client,
+    db_path: str,
     device: torch.device | str,
 ) -> List[Tuple[float, str, str]]:
     """Find duplicate pairs in a folder using the active model and ChromaDB."""
-    directory = os.path.abspath(folder_path)
+    directory = canonical_path(folder_path)
     if not os.path.isdir(directory):
         return []
 
@@ -165,24 +168,33 @@ def find_duplicates_in_folder(
         print(f"Warning: Could not get ChromaDB collection: {e}")
         return []
 
+    store = IndexStore(db_path)
+    store.upsert_folder(directory)
+    records = [build_media_record(path, directory) for path in image_paths]
+    record_by_path = {record.path: record for record in records}
+
     # Try to fetch embeddings from DB
     embeddings_list: List[np.ndarray] = []
     paths_list: List[str] = []
     present_map = {}
     if collection is not None:
-        present_map = fetch_embeddings_from_db(collection, image_paths, batch_size=1000)
-    missing_paths = [p for p in image_paths if p not in present_map]
+        present_map = fetch_embeddings_from_db(
+            collection, [record.media_id for record in records], batch_size=1000
+        )
+    missing_records = [
+        record for record in records if record.media_id not in present_map
+    ]
     if present_map:
         # Append in directory order for deterministic output
-        for p in image_paths:
-            if p in present_map:
-                embeddings_list.append(present_map[p])
-                paths_list.append(p)
+        for record in records:
+            if record.media_id in present_map:
+                embeddings_list.append(present_map[record.media_id])
+                paths_list.append(record.path)
 
     # Compute missing embeddings
-    if missing_paths:
+    if missing_records:
         miss_embeddings, miss_processed = compute_embeddings(
-            image_paths=missing_paths,
+            image_paths=[record.path for record in missing_records],
             model=active_model,
             processor=active_processor,
             device=device,
@@ -190,21 +202,24 @@ def find_duplicates_in_folder(
             batch_size=batch_size,
         )
         if miss_embeddings.size > 0 and len(miss_processed) > 0:
+            miss_records = [record_by_path[path] for path in miss_processed]
             if collection is not None:
                 try:
                     collection.upsert(
                         embeddings=miss_embeddings,
-                        documents=miss_processed,
-                        ids=miss_processed,
+                        documents=[record.path for record in miss_records],
+                        ids=[record.media_id for record in miss_records],
+                        metadatas=[record.to_metadata() for record in miss_records],
                     )
                 except Exception as e:
                     print(f"Warning: failed to upsert embeddings: {e}")
+            store.upsert_media_records(miss_records)
             # Append to working arrays following the directory order
             miss_map = {p: e for p, e in zip(miss_processed, miss_embeddings)}
-            for p in image_paths:
-                if p in miss_map:
-                    embeddings_list.append(miss_map[p])
-                    paths_list.append(p)
+            for record in records:
+                if record.path in miss_map:
+                    embeddings_list.append(miss_map[record.path])
+                    paths_list.append(record.path)
 
     if len(paths_list) < 2:
         return []

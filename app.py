@@ -24,20 +24,28 @@ if sys.platform == "win32":
     _ProactorBasePipeTransport._call_connection_lost = _safe_connection_lost
 
 import os
-import random
 import time
 
 import chromadb
 import gradio as gr
+import numpy as np
 import torch
 import torch.nn.functional as F
 
 from build_db import db_add_folders, db_delete_folder, db_update_indexed_folders
 from device import get_best_device, get_best_dtype
 from find_duplicates import find_duplicates_in_folder
+from index_store import (
+    IndexStore,
+    is_path_under_folder,
+    migrate_legacy_db,
+    path_and_caption_from_result,
+    query_filter_for_folder,
+    relative_caption,
+)
 from model_utils import load_model_and_processor
 
-__version__ = "1.3.1"
+__version__ = "1.4.0"
 
 # --- Configuration ---
 AVAILABLE_MODELS = [
@@ -119,9 +127,16 @@ def generate_db_path_for_model(model_path_str: str) -> str:
 
 
 def read_indexed_folders(db_path: str) -> list[str]:
-    """Reads the indexed_folders.txt file from the given db_path and returns a list of folder paths."""
+    """Reads indexed folders from the SQLite registry, falling back to the legacy text file."""
     if not db_path:
         return []
+    try:
+        folders = IndexStore(db_path).list_folders()
+        if folders:
+            return folders
+    except Exception as e:
+        print(f"Error reading indexed folders registry: {e}")
+
     indexed_folders_file = os.path.join(db_path, "indexed_folders.txt")
     folders = []
     if os.path.exists(indexed_folders_file):
@@ -225,9 +240,12 @@ def load_and_switch_model_db(
         progress(0.7, desc="Initializing ChromaDB client...")
         new_chroma_client = chromadb.PersistentClient(path=new_db_path)
         try:
-            new_chroma_client.get_or_create_collection(
+            collection = new_chroma_client.get_or_create_collection(
                 name="images", metadata={"hnsw:space": "cosine"}
             )
+            migrated_count = migrate_legacy_db(new_db_path, collection)
+            if migrated_count:
+                progress(0.85, desc=f"Migrated {migrated_count} legacy records.")
         except Exception as db_e:
             print(f"ChromaDB collection error: {db_e}")
             gr.Warning(
@@ -498,11 +516,10 @@ def filter_gallery_by_active_folder(gallery_images: list, active_folder: str) ->
     """Filters gallery images to only include those under the active folder."""
     if not active_folder or active_folder == "All":
         return gallery_images
-    folder_norm = os.path.normpath(os.path.abspath(active_folder))
     return [
         (path, caption)
         for path, caption in gallery_images
-        if os.path.normpath(os.path.abspath(path)).startswith(folder_norm)
+        if is_path_under_folder(path, active_folder)
     ]
 
 
@@ -516,15 +533,9 @@ def get_relative_caption(abs_path: str, indexed_folders_text: str) -> str:
     folders = [f.strip() for f in indexed_folders_text.split("\n") if f.strip()]
     folders.sort(key=len, reverse=True)
 
-    abs_path_norm = os.path.normpath(os.path.abspath(abs_path))
-
     for folder in folders:
-        folder_norm = os.path.normpath(os.path.abspath(folder))
-        if abs_path_norm.startswith(folder_norm):
-            try:
-                return os.path.relpath(abs_path_norm, folder_norm)
-            except ValueError:
-                continue
+        if is_path_under_folder(abs_path, folder):
+            return relative_caption(abs_path, folder)
     return abs_path
 
 
@@ -584,6 +595,7 @@ def handle_find_duplicates(
             active_processor=active_processor_state_val,
             active_model_type=active_model_type_state_val,
             active_chroma_client=active_chroma_client_state_val,
+            db_path=current_db_path,
             device=device,
         )
 
@@ -651,8 +663,8 @@ def search(
     current_logit_scale_exp_val: float,
     current_logit_bias_val: float,
     current_chroma_client,
+    current_db_path: str,
     verbose_ui: bool,
-    indexed_folders_text: str,
     active_folder: str = "All",
 ):
     start_time = time.time()
@@ -662,7 +674,7 @@ def search(
     image_emb_normalized_float32 = None
     gallery_images = []
 
-    if not current_chroma_client or not current_model:
+    if not current_chroma_client or not current_model or not current_db_path:
         gr.Warning("Model or Database not loaded. Please select a model.")
         return []
     if not text_query_present and not image_query_present:
@@ -678,6 +690,8 @@ def search(
             "Ensure `build-db.py` has been run for the selected model and then click 'Update/Sync Active DB'."
         )
         return []
+
+    where_clause = query_filter_for_folder(active_folder)
 
     # Process Text Query (if provided)
     if text_query_present:
@@ -738,11 +752,11 @@ def search(
                     "documents",
                     "embeddings",
                     "distances",
+                    "metadatas",
                 ],  # Distances for CLIP, embeddings for SigLIP logit calc
             }
-            if active_folder and active_folder != "All":
-                folder_norm = os.path.normpath(os.path.abspath(active_folder))
-                query_kwargs["where_document"] = {"$contains": folder_norm}
+            if where_clause:
+                query_kwargs["where"] = where_clause
 
             query_results = collection.query(**query_kwargs)
         except Exception as e:
@@ -760,7 +774,7 @@ def search(
 
             img_embeddings_list = query_results["embeddings"][0]
             all_img_embeddings_tensor = torch.tensor(
-                img_embeddings_list, dtype=torch.float32
+                np.asarray(img_embeddings_list), dtype=torch.float32
             ).to(device)
 
             # For text, cosine similarity is between text query embedding and DB image embeddings
@@ -792,20 +806,26 @@ def search(
                     )
 
             doc_paths_all = query_results["documents"][0]
+            metadatas_all = (query_results.get("metadatas") or [[]])[0] or []
             passing_indices = torch.where(passes_threshold_mask)[0]
 
             for idx_tensor in passing_indices:
                 idx = idx_tensor.item()
-                doc_path = doc_paths_all[idx]
+                metadata = metadatas_all[idx] if idx < len(metadatas_all) else None
+                doc_path, caption = path_and_caption_from_result(
+                    doc_paths_all[idx], metadata
+                )
                 if os.path.exists(doc_path):
-                    caption = get_relative_caption(doc_path, indexed_folders_text)
                     gallery_images.append((doc_path, caption))
                 else:
                     print(f"Missing: {doc_path}")
 
             if verbose_ui:
                 for i in range(candidates_count):
-                    doc_path = doc_paths_all[i]
+                    metadata = metadatas_all[i] if i < len(metadatas_all) else None
+                    doc_path, _ = path_and_caption_from_result(
+                        doc_paths_all[i], metadata
+                    )
                     cos_sim_val = batch_cos_sim[i].item()
                     logit_val = batch_logit_val_for_print[i].item()
                     sigmoid_val = torch.sigmoid(
@@ -823,11 +843,10 @@ def search(
                 .squeeze(0)
                 .numpy(),
                 "n_results": int(initial_n_results_ui),
-                "include": ["documents", "embeddings"],
+                "include": ["documents", "embeddings", "metadatas"],
             }
-            if active_folder and active_folder != "All":
-                folder_norm = os.path.normpath(os.path.abspath(active_folder))
-                query_kwargs["where_document"] = {"$contains": folder_norm}
+            if where_clause:
+                query_kwargs["where"] = where_clause
 
             query_results = collection.query(**query_kwargs)
         except Exception as e:
@@ -841,9 +860,10 @@ def search(
             and query_results["documents"][0]
         ):
             doc_paths_all = query_results["documents"][0]
+            metadatas_all = (query_results.get("metadatas") or [[]])[0] or []
             db_img_embeddings_list = query_results["embeddings"][0]
             all_db_img_embeddings_tensor = torch.tensor(
-                db_img_embeddings_list, dtype=torch.float32
+                np.asarray(db_img_embeddings_list), dtype=torch.float32
             ).to(device)
             candidates_count = len(doc_paths_all)
             print(f"Processing {candidates_count} candidates from DB (Image)")
@@ -861,15 +881,18 @@ def search(
             temp_results = []  # To sort before adding to gallery_images
             for idx_tensor in passing_indices:
                 idx = idx_tensor.item()
+                metadata = metadatas_all[idx] if idx < len(metadatas_all) else None
+                doc_path, caption = path_and_caption_from_result(
+                    doc_paths_all[idx], metadata
+                )
                 temp_results.append(
-                    (doc_paths_all[idx], batch_cos_sim_to_query_image[idx].item())
+                    (doc_path, caption, batch_cos_sim_to_query_image[idx].item())
                 )
 
-            temp_results.sort(key=lambda x: x[1], reverse=True)
+            temp_results.sort(key=lambda x: x[2], reverse=True)
 
-            for doc_path, cos_sim_val in temp_results:
+            for doc_path, caption, cos_sim_val in temp_results:
                 if os.path.exists(doc_path):
-                    caption = get_relative_caption(doc_path, indexed_folders_text)
                     gallery_images.append((doc_path, caption))
                     if verbose_ui:
                         print(f"✓ {doc_path} (img_cos_sim: {cos_sim_val:.4f})")
@@ -886,11 +909,6 @@ def search(
     elif text_query_present and image_query_present:
         print("Search Mode: COMBINED")
 
-        where_document_clause = None
-        if active_folder and active_folder != "All":
-            folder_norm = os.path.normpath(os.path.abspath(active_folder))
-            where_document_clause = {"$contains": folder_norm}
-
         # 1. Text Search Leg
         try:
             text_query_kwargs = {
@@ -898,10 +916,10 @@ def search(
                 .squeeze(0)
                 .numpy(),
                 "n_results": int(initial_n_results_ui),
-                "include": ["documents", "embeddings"],
+                "include": ["documents", "embeddings", "metadatas"],
             }
-            if where_document_clause:
-                text_query_kwargs["where_document"] = where_document_clause
+            if where_clause:
+                text_query_kwargs["where"] = where_clause
 
             text_query_results = collection.query(**text_query_kwargs)
         except Exception as e:
@@ -916,10 +934,10 @@ def search(
                 .squeeze(0)
                 .numpy(),
                 "n_results": int(initial_n_results_ui),
-                "include": ["documents", "embeddings"],
+                "include": ["documents", "embeddings", "metadatas"],
             }
-            if where_document_clause:
-                image_query_kwargs["where_document"] = where_document_clause
+            if where_clause:
+                image_query_kwargs["where"] = where_clause
 
             image_query_results = collection.query(**image_query_kwargs)
         except Exception as e:
@@ -927,37 +945,47 @@ def search(
             gr.Warning(f"Error in combined search (image leg): {e}")
             return []
 
-        candidate_data = {}  # {doc_path: {'db_embedding': tensor}}
+        candidate_data = {}
         if text_query_results["documents"] and text_query_results["documents"][0]:
+            text_metadatas = (text_query_results.get("metadatas") or [[]])[0] or []
             for i, doc_path in enumerate(text_query_results["documents"][0]):
-                if doc_path not in candidate_data:
-                    candidate_data[doc_path] = {
+                metadata = text_metadatas[i] if i < len(text_metadatas) else None
+                result_path, caption = path_and_caption_from_result(doc_path, metadata)
+                media_id = (metadata or {}).get("media_id") or result_path
+                if media_id not in candidate_data:
+                    candidate_data[media_id] = {
+                        "path": result_path,
+                        "caption": caption,
                         "db_embedding": torch.tensor(
                             text_query_results["embeddings"][0][i], dtype=torch.float32
-                        ).to(device)
+                        ).to(device),
                     }
 
         if image_query_results["documents"] and image_query_results["documents"][0]:
+            image_metadatas = (image_query_results.get("metadatas") or [[]])[0] or []
             for i, doc_path in enumerate(image_query_results["documents"][0]):
-                if doc_path not in candidate_data:
-                    candidate_data[doc_path] = {
+                metadata = image_metadatas[i] if i < len(image_metadatas) else None
+                result_path, caption = path_and_caption_from_result(doc_path, metadata)
+                media_id = (metadata or {}).get("media_id") or result_path
+                if media_id not in candidate_data:
+                    candidate_data[media_id] = {
+                        "path": result_path,
+                        "caption": caption,
                         "db_embedding": torch.tensor(
                             image_query_results["embeddings"][0][i], dtype=torch.float32
-                        ).to(device)
+                        ).to(device),
                     }
 
         print(
             f"Processing {len(candidate_data)} unique candidates from combined search."
         )
-        final_combined_results_data = (
-            []
-        )  # List of (doc_path, combined_score, text_sim, image_sim)
+        final_combined_results_data = []  # List of (doc_path, combined_score, text_sim, image_sim)
 
-        candidate_paths = list(candidate_data.keys())
-        if candidate_paths:
+        candidate_ids = list(candidate_data.keys())
+        if candidate_ids:
             # Batch process all candidates
             all_db_embeddings_tensor = torch.stack(
-                [candidate_data[p]["db_embedding"] for p in candidate_paths]
+                [candidate_data[p]["db_embedding"] for p in candidate_ids]
             )
 
             # Batched cosine similarity
@@ -974,19 +1002,21 @@ def search(
             passing_indices = torch.where(passing_mask)[0]
 
             for idx in passing_indices:
-                doc_path = candidate_paths[idx]
+                candidate_id = candidate_ids[idx]
+                data = candidate_data[candidate_id]
+                doc_path = data["path"]
+                caption = data["caption"]
                 score = combined_scores_batch[idx].item()
                 ts = text_sims_batch[idx].item()
                 Is = image_sims_batch[idx].item()
-                final_combined_results_data.append((doc_path, score, ts, Is))
+                final_combined_results_data.append((doc_path, caption, score, ts, Is))
 
-        final_combined_results_data.sort(key=lambda x: x[1], reverse=True)
+        final_combined_results_data.sort(key=lambda x: x[2], reverse=True)
 
-        for doc_path, score, ts, Is in final_combined_results_data[
+        for doc_path, caption, score, ts, Is in final_combined_results_data[
             : int(initial_n_results_ui)
         ]:
             if os.path.exists(doc_path):
-                caption = get_relative_caption(doc_path, indexed_folders_text)
                 gallery_images.append((doc_path, caption))
                 if verbose_ui:
                     print(
@@ -997,7 +1027,8 @@ def search(
 
         if verbose_ui and not gallery_images and candidate_data:
             print("No candidates passed the combined similarity threshold.")
-            for doc_path, data_dict in candidate_data.items():
+            for data_dict in candidate_data.values():
+                doc_path = data_dict["path"]
                 db_img_embedding_tensor = data_dict["db_embedding"]
                 text_sim = F.cosine_similarity(
                     text_emb_normalized_float32.squeeze(0),
@@ -1028,19 +1059,19 @@ def search(
 def random_search(
     initial_n_results_ui: int,
     current_chroma_client,
-    indexed_folders_text: str,
+    current_db_path: str,
     active_folder: str = "All",
 ):
     """Returns a random selection of images from ChromaDB."""
     start_time = time.time()
     gallery_images = []
 
-    if not current_chroma_client:
+    if not current_chroma_client or not current_db_path:
         gr.Warning("Database not loaded. Please select a model.")
         return []
 
     try:
-        collection = current_chroma_client.get_collection("images")
+        current_chroma_client.get_collection("images")
     except Exception as e:
         print(f"Error getting collection: {e}")
         gr.Info(
@@ -1050,42 +1081,19 @@ def random_search(
         return []
 
     try:
-        # Get all documents from ChromaDB
-        get_kwargs = {"include": ["documents"]}
-        if active_folder and active_folder != "All":
-            folder_norm = os.path.normpath(os.path.abspath(active_folder))
-            get_kwargs["where_document"] = {"$contains": folder_norm}
-
-        all_results = collection.get(**get_kwargs)
-
-        if (
-            not all_results
-            or not all_results.get("documents")
-            or not all_results["documents"]
-        ):
-            gr.Info("No images found in the database.")
-            return []
-
-        all_documents = all_results["documents"]
-        total_count = len(all_documents)
-
-        if total_count == 0:
-            gr.Info("No images found in the database.")
-            return []
-
-        # Randomly sample the requested number of results
-        n_results = min(int(initial_n_results_ui), total_count)
-        sampled_indices = random.sample(range(total_count), n_results)
-
-        print(
-            f"Random search: Sampling {n_results} images from {total_count} total images."
+        records = IndexStore(current_db_path).sample_media(
+            int(initial_n_results_ui), active_folder
         )
+        if not records:
+            gr.Info("No images found in the database.")
+            return []
 
-        for idx in sampled_indices:
-            doc_path = all_documents[idx]
+        print(f"Random search: Sampling {len(records)} images from the index.")
+
+        for record in records:
+            doc_path = record.path
             if os.path.exists(doc_path):
-                caption = get_relative_caption(doc_path, indexed_folders_text)
-                gallery_images.append((doc_path, caption))
+                gallery_images.append((doc_path, record.relative_path))
             else:
                 print(f"Missing: {doc_path}")
 
@@ -1110,6 +1118,18 @@ def random_search(
 def clear_search_and_gallery():
     """Clears the search query textbox, image input, and the results gallery."""
     return "", None, []
+
+
+def get_allowed_gallery_paths() -> list[str]:
+    """Returns paths Gradio may serve; broad access remains the default."""
+    configured_paths = os.environ.get("LOCALLENS_ALLOWED_PATHS")
+    if configured_paths:
+        return [path for path in configured_paths.split(os.pathsep) if path]
+
+    paths = ["/"]
+    if os.name == "nt":
+        paths = [f"{chr(d)}:\\" for d in range(ord("A"), ord("Z") + 1)]
+    return paths
 
 
 css_gallary = """
@@ -1158,7 +1178,6 @@ if __name__ == "__main__":
         css=css_gallary,
         title="Local Lens",
     ) as app:
-
         gr.Markdown("# Local Lens")
 
         active_model_path_state = gr.State(DEFAULT_MODEL_PATH)
@@ -1460,8 +1479,8 @@ if __name__ == "__main__":
             logit_scale_state,
             logit_bias_state,
             chroma_client_state,
+            active_db_path_state,
             verbose_checkbox,
-            indexed_folders_display,
             active_folder_dropdown,
         ]
 
@@ -1471,7 +1490,7 @@ if __name__ == "__main__":
         random_search_inputs = [
             initial_n_results_slider,
             chroma_client_state,
-            indexed_folders_display,
+            active_db_path_state,
             active_folder_dropdown,
         ]
         feeling_lucky_button.click(
@@ -1484,10 +1503,4 @@ if __name__ == "__main__":
             outputs=[query_textbox, query_image_input, results_gallery],
         )
 
-    # Gradio requires explicit permission to pass file paths to the gallery.
-    # Linux/Mac: allow root ("/"), Windows: add drive letters A-Z.
-    allowed_paths = ["/"]
-    if os.name == "nt":
-        allowed_paths = [f"{chr(d)}:\\" for d in range(ord("A"), ord("Z") + 1)]
-
-    app.launch(inbrowser=True, allowed_paths=allowed_paths)
+    app.launch(inbrowser=True, allowed_paths=get_allowed_gallery_paths())

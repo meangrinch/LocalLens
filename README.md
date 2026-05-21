@@ -108,6 +108,10 @@ pip install -r requirements.txt
 
 Click "Find Duplicates" in the UI with a specified indexed image directory to return similar matching images pairs.
 
+### Local file access
+
+The Gradio gallery is launched with broad local file access by default so it can display image paths from any indexed folder. To restrict this, set `LOCALLENS_ALLOWED_PATHS` to an OS path-list before launching the app.
+
 ## Documentation
 
 - [Hardware Requirements](docs/HARDWARE_REQUIREMENTS.md)
