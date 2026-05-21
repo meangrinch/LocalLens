@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "locallens"
+description = "A tool for finding local images using AI"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "grinnch" }]
+dynamic = ["version", "dependencies"]
+
+[project.urls]
+Homepage = "https://github.com/meangrinch/LocalLens"
+Repository = "https://github.com/meangrinch/LocalLens"
+Issues = "https://github.com/meangrinch/LocalLens/issues"
+
+[project.optional-dependencies]
+dev = ["ruff"]
+
+[tool.ruff]
+target-version = "py310"
+
+[tool.setuptools]
+py-modules = [
+    "app",
+    "build_db",
+    "device",
+    "find_duplicates",
+    "index_store",
+    "model_utils",
+]
+
+[tool.setuptools.dynamic]
+version = { attr = "app.__version__" }
+dependencies = { file = ["requirements.txt"] }
