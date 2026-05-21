@@ -23,6 +23,9 @@ dev = ["ruff"]
 [tool.ruff]
 target-version = "py310"
 
+[tool.ruff.lint]
+extend-select = ["I"]
+
 [tool.setuptools]
 py-modules = [
     "app",
