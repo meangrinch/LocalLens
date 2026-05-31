@@ -4,7 +4,7 @@ from typing import List, Tuple
 import numpy as np
 import torch
 
-from index_store import IndexStore, build_media_record, canonical_path
+from index_store import IndexStore, build_media_record, canonical_path, path_key
 from model_utils import extract_features
 
 IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"]
@@ -152,12 +152,46 @@ def find_duplicates_in_folder(
     device: torch.device | str,
 ) -> List[Tuple[float, str, str]]:
     """Find duplicate pairs in a folder using the active model and ChromaDB."""
-    directory = canonical_path(folder_path)
-    if not os.path.isdir(directory):
-        return []
+    return find_duplicates_in_folders(
+        folder_paths=[folder_path],
+        threshold=threshold,
+        batch_size=batch_size,
+        block_size=block_size,
+        recursive=recursive,
+        active_model=active_model,
+        active_processor=active_processor,
+        active_model_type=active_model_type,
+        active_chroma_client=active_chroma_client,
+        db_path=db_path,
+        device=device,
+    )
 
-    image_paths = list_image_files(directory, recursive=recursive)
-    if len(image_paths) < 2:
+
+def find_duplicates_in_folders(
+    folder_paths: List[str],
+    threshold: float,
+    batch_size: int,
+    block_size: int,
+    recursive: bool,
+    active_model,
+    active_processor,
+    active_model_type: str,
+    active_chroma_client,
+    db_path: str,
+    device: torch.device | str,
+) -> List[Tuple[float, str, str]]:
+    """Find duplicate pairs across one or more folders."""
+    directories = [
+        canonical_path(folder_path)
+        for folder_path in folder_paths
+        if folder_path and os.path.isdir(canonical_path(folder_path))
+    ]
+    directory_by_key = {path_key(directory): directory for directory in directories}
+    directories = sorted(
+        directory_by_key.values(),
+        key=lambda item: (-len(path_key(item)), path_key(item)),
+    )
+    if not directories:
         return []
 
     # Get collection from ChromaDB
@@ -169,8 +203,20 @@ def find_duplicates_in_folder(
         return []
 
     store = IndexStore(db_path)
-    store.upsert_folder(directory)
-    records = [build_media_record(path, directory) for path in image_paths]
+    records = []
+    seen_paths = set()
+    for directory in directories:
+        store.upsert_folder(directory)
+        for image_path in list_image_files(directory, recursive=recursive):
+            record = build_media_record(image_path, directory)
+            if record.path_key in seen_paths:
+                continue
+            seen_paths.add(record.path_key)
+            records.append(record)
+
+    if len(records) < 2:
+        return []
+
     record_by_path = {record.path: record for record in records}
 
     # Try to fetch embeddings from DB

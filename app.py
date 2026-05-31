@@ -34,7 +34,7 @@ import torch.nn.functional as F
 
 from build_db import db_add_folders, db_delete_folder, db_update_indexed_folders
 from device import get_best_device, get_best_dtype
-from find_duplicates import find_duplicates_in_folder
+from find_duplicates import find_duplicates_in_folder, find_duplicates_in_folders
 from index_store import (
     IndexStore,
     is_path_under_folder,
@@ -487,6 +487,14 @@ def handle_delete_folder_button_click(
     return "\n".join(current_indexed_folders)
 
 
+def parse_indexed_folders_text(indexed_folders_text: str) -> list[str]:
+    return [
+        f.strip()
+        for f in (indexed_folders_text or "").split("\n")
+        if f.strip() and os.path.sep in f.strip()
+    ]
+
+
 def update_duplicate_folder_dropdown(current_db_path: str):
     """Updates the duplicate folder dropdown with indexed folders."""
     if not current_db_path:
@@ -494,18 +502,15 @@ def update_duplicate_folder_dropdown(current_db_path: str):
     folders = read_indexed_folders(current_db_path)
     if not folders:
         return gr.Dropdown(choices=[], value=None)
-    return gr.Dropdown(choices=folders, value=folders[0] if folders else None)
+    choices = ["All"] + folders
+    return gr.Dropdown(choices=choices, value="All")
 
 
 def update_active_folder_dropdown(indexed_folders_text: str):
     """Updates the active folder dropdown from indexed folders text, with 'All' as default."""
     if not indexed_folders_text:
         return gr.Dropdown(choices=[], value=None)
-    folders = [
-        f.strip()
-        for f in indexed_folders_text.split("\n")
-        if f.strip() and os.path.sep in f.strip()
-    ]
+    folders = parse_indexed_folders_text(indexed_folders_text)
     if not folders:
         return gr.Dropdown(choices=[], value=None)
     choices = ["All"] + folders
@@ -574,30 +579,64 @@ def handle_find_duplicates(
         )
         return []
 
-    if not os.path.isdir(duplicate_folder_path):
+    scan_all_folders = duplicate_folder_path == "All"
+    if scan_all_folders:
+        duplicate_folders = parse_indexed_folders_text(indexed_folders_text)
+        missing_folders = [
+            folder for folder in duplicate_folders if not os.path.isdir(folder)
+        ]
+        duplicate_folders = [
+            folder for folder in duplicate_folders if os.path.isdir(folder)
+        ]
+        if not duplicate_folders:
+            gr.Warning("No indexed folders are available to scan.")
+            return []
+        if missing_folders:
+            print(
+                "Skipping missing indexed folders: "
+                + ", ".join(os.path.abspath(folder) for folder in missing_folders)
+            )
+            gr.Warning(f"Skipping {len(missing_folders)} missing indexed folder(s).")
+    elif not os.path.isdir(duplicate_folder_path):
         print(f"Folder not found on disk: {os.path.abspath(duplicate_folder_path)}")
         gr.Warning(f"Folder not found: {duplicate_folder_path}")
         return []
+    else:
+        duplicate_folders = [duplicate_folder_path]
 
     start_time = time.time()
     print(f"Processing duplicate search: {duplicate_folder_path}")
     print("Search Mode: DUPLICATES")
 
     try:
-        # Find duplicate pairs
-        pairs = find_duplicates_in_folder(
-            folder_path=duplicate_folder_path,
-            threshold=duplicate_threshold,
-            batch_size=batch_size_ui,
-            block_size=1024,
-            recursive=True,
-            active_model=active_model_state_val,
-            active_processor=active_processor_state_val,
-            active_model_type=active_model_type_state_val,
-            active_chroma_client=active_chroma_client_state_val,
-            db_path=current_db_path,
-            device=device,
-        )
+        if scan_all_folders:
+            pairs = find_duplicates_in_folders(
+                folder_paths=duplicate_folders,
+                threshold=duplicate_threshold,
+                batch_size=batch_size_ui,
+                block_size=1024,
+                recursive=True,
+                active_model=active_model_state_val,
+                active_processor=active_processor_state_val,
+                active_model_type=active_model_type_state_val,
+                active_chroma_client=active_chroma_client_state_val,
+                db_path=current_db_path,
+                device=device,
+            )
+        else:
+            pairs = find_duplicates_in_folder(
+                folder_path=duplicate_folder_path,
+                threshold=duplicate_threshold,
+                batch_size=batch_size_ui,
+                block_size=1024,
+                recursive=True,
+                active_model=active_model_state_val,
+                active_processor=active_processor_state_val,
+                active_model_type=active_model_type_state_val,
+                active_chroma_client=active_chroma_client_state_val,
+                db_path=current_db_path,
+                device=device,
+            )
 
         # Convert pairs to gallery format
         gallery_images = []
@@ -1248,9 +1287,9 @@ if __name__ == "__main__":
                 with gr.Accordion("Find Duplicates", open=False):
                     duplicate_folder_dropdown = gr.Dropdown(
                         label="Select Indexed Folder to Scan",
-                        choices=[],
-                        value=None,
-                        info="Select a folder from the indexed folders above.",
+                        choices=["All"],
+                        value="All",
+                        info="Scan all indexed folders or select one folder.",
                     )
                     duplicate_threshold_slider = gr.Slider(
                         minimum=0.0,
@@ -1350,10 +1389,11 @@ if __name__ == "__main__":
             """Update duplicate dropdown from indexed folders text."""
             if not indexed_folders_text:
                 return gr.Dropdown(choices=[], value=None)
-            folders = [f.strip() for f in indexed_folders_text.split("\n") if f.strip()]
+            folders = parse_indexed_folders_text(indexed_folders_text)
             if not folders:
                 return gr.Dropdown(choices=[], value=None)
-            return gr.Dropdown(choices=folders, value=folders[0] if folders else None)
+            choices = ["All"] + folders
+            return gr.Dropdown(choices=choices, value="All")
 
         def update_all_folder_dropdowns(indexed_folders_text: str):
             """Update both active folder and duplicate folder dropdowns."""
