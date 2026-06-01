@@ -79,13 +79,13 @@ source venv/bin/activate
 
 ```bash
 # Example (CUDA 13.0)
-pip install torch==2.10.0+cu130 torchvision==0.25.0+cu130 --extra-index-url https://download.pytorch.org/whl/cu130
+pip install torch==2.12.0+cu130 torchvision==0.27.0+cu130 --extra-index-url https://download.pytorch.org/whl/cu130
 # Example (ROCm 7.1)
-pip install torch==2.10.0+rocm7.1 torchvision==0.25.0+rocm7.1 --extra-index-url https://download.pytorch.org/whl/rocm7.1
+pip install torch==2.12.0+rocm7.1 torchvision==0.27.0+rocm7.1 --extra-index-url https://download.pytorch.org/whl/rocm7.1
 # Example (XPU)
-pip install torch==2.10.0+xpu torchvision==0.25.0+xpu --extra-index-url https://download.pytorch.org/whl/xpu
+pip install torch==2.12.0+xpu torchvision==0.27.0+xpu --extra-index-url https://download.pytorch.org/whl/xpu
 # Example (MPS/CPU)
-pip install torch==2.10.0 torchvision==0.25.0
+pip install torch==2.12.0 torchvision==0.27.0
 ```
 
 4. Install dependencies
