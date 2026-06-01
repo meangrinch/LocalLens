@@ -5,7 +5,7 @@
 - **CPU:** 4-core CPU (6+ core CPU Recommended)
 - **RAM:** 8 GB (12+ GB Recommended)
 - **VRAM:** 0 GB (4+ GB Recommended)
-- **Storage:** 10 MB
+- **Storage:** 20 MB
 
 ### Vision Embedding Models
 
