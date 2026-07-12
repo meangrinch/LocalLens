@@ -391,14 +391,19 @@ def handle_add_folder_button_click(
             images_in_batch = kwargs.get("images_in_batch", 0)
             cumulative_processed = kwargs.get("cumulative_processed_this_run", 0)
             total_images_to_process = kwargs.get("total_images_to_process", 1)
+            batch_duration = kwargs.get("batch_duration_seconds")
 
             prog_fraction = (
                 cumulative_processed / total_images_to_process
                 if total_images_to_process > 0
                 else 0
             )
+            duration_part = (
+                f" in {batch_duration:.2f}s" if batch_duration is not None else ""
+            )
             desc_str = (
-                f"Batch {current_batch}/{total_batches} ({images_in_batch} images). "
+                f"Batch {current_batch}/{total_batches} "
+                f"({images_in_batch} images{duration_part}). "
                 f"Total: {cumulative_processed}/{total_images_to_process}"
             )
             progress(prog_fraction, desc=desc_str)

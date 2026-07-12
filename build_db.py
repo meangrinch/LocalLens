@@ -81,6 +81,7 @@ def _upsert_records_with_store(
         prepare_future = prepare_executor.submit(_prepare, batch_groups[0])
 
         for batch_number, batch_records in enumerate(batch_groups, start=1):
+            batch_start = time.perf_counter()
             prepared, prepare_error = prepare_future.result()
 
             if batch_number < total_batches:
@@ -118,9 +119,10 @@ def _upsert_records_with_store(
 
             processed_records.extend(batch_processed_records)
             processed_count += len(batch_processed_records)
+            batch_duration = time.perf_counter() - batch_start
             print(
                 f"Batch {batch_number}/{total_batches}: "
-                f"{len(batch_processed_records)} images done."
+                f"{len(batch_processed_records)} images done in {batch_duration:.2f}s."
             )
             _emit_progress(
                 progress_callback,
@@ -130,6 +132,7 @@ def _upsert_records_with_store(
                 images_in_batch=len(batch_processed_records),
                 cumulative_processed_this_run=processed_count,
                 total_images_to_process=len(records),
+                batch_duration_seconds=batch_duration,
             )
 
     _store_processed_records(db_path_str, processed_records)
