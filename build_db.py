@@ -1,6 +1,7 @@
 import argparse
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import chromadb
 import torch
@@ -15,7 +16,11 @@ from index_store import (
     path_key,
     write_indexed_folders_mirror,
 )
-from model_utils import extract_features, load_model_and_processor
+from model_utils import (
+    embed_prepared_batch,
+    load_model_and_processor,
+    prepare_image_batch,
+)
 
 torch.set_float32_matmul_precision("high")
 
@@ -51,7 +56,6 @@ def _upsert_records_with_store(
     model_param,
     processor_param,
     device,
-    model_type_param_ext,
     batch_size_param: int,
     progress_callback=None,
 ) -> int:
@@ -61,51 +65,72 @@ def _upsert_records_with_store(
     record_by_key = {record.path_key: record for record in records}
     processed_records = []
     processed_count = 0
-    total_batches = (len(records) + batch_size_param - 1) // batch_size_param
+    batch_groups = list(batched(records, batch_size_param))
+    total_batches = len(batch_groups)
 
-    for batch_number, batch_records in enumerate(
-        batched(records, batch_size_param), start=1
-    ):
+    def _prepare(batch_records):
         batch_paths = [record.path for record in batch_records]
         try:
-            batch_embeddings, processed_files = extract_features(
-                batch_paths,
-                model_param,
-                processor_param,
-                device,
-                model_type_param_ext,
-            )
-            if not processed_files:
-                print(f"Batch failed: {len(batch_paths)} files could not be processed")
+            inputs, processed_files = prepare_image_batch(batch_paths, processor_param)
+        except Exception as e:
+            return None, e
+        return (inputs, processed_files), None
+
+    # Prefetch decode+CPU preprocess of the next batch while the GPU embeds.
+    with ThreadPoolExecutor(max_workers=1) as prepare_executor:
+        prepare_future = prepare_executor.submit(_prepare, batch_groups[0])
+
+        for batch_number, batch_records in enumerate(batch_groups, start=1):
+            prepared, prepare_error = prepare_future.result()
+
+            if batch_number < total_batches:
+                prepare_future = prepare_executor.submit(
+                    _prepare, batch_groups[batch_number]
+                )
+
+            if prepare_error is not None:
+                print(f"Error processing batch: {prepare_error}")
                 continue
 
-            batch_processed_records = [
-                record_by_key[path_key(path)] for path in processed_files
-            ]
-            collection.upsert(
-                embeddings=batch_embeddings,
-                documents=[record.path for record in batch_processed_records],
-                ids=[record.media_id for record in batch_processed_records],
-                metadatas=[record.to_metadata() for record in batch_processed_records],
-            )
-        except Exception as e:
-            print(f"Error processing batch: {e}")
-            continue
+            inputs, processed_files = prepared
+            if not processed_files or inputs is None:
+                print(
+                    f"Batch failed: {len(batch_records)} files could not be processed"
+                )
+                continue
 
-        processed_records.extend(batch_processed_records)
-        processed_count += len(batch_processed_records)
-        print(
-            f"Batch {batch_number}/{total_batches}: {len(batch_processed_records)} images done."
-        )
-        _emit_progress(
-            progress_callback,
-            "batch_processed",
-            current_batch_num=batch_number,
-            total_batches=total_batches,
-            images_in_batch=len(batch_processed_records),
-            cumulative_processed_this_run=processed_count,
-            total_images_to_process=len(records),
-        )
+            try:
+                batch_embeddings = embed_prepared_batch(inputs, model_param, device)
+                batch_processed_records = [
+                    record_by_key[path_key(path)] for path in processed_files
+                ]
+                collection.upsert(
+                    embeddings=batch_embeddings,
+                    documents=[record.path for record in batch_processed_records],
+                    ids=[record.media_id for record in batch_processed_records],
+                    metadatas=[
+                        record.to_metadata() for record in batch_processed_records
+                    ],
+                )
+            except Exception as e:
+                print(f"Error processing batch: {e}")
+                continue
+
+            processed_records.extend(batch_processed_records)
+            processed_count += len(batch_processed_records)
+            print(
+                f"Batch {batch_number}/{total_batches}: "
+                f"{len(batch_processed_records)} images done."
+            )
+            _emit_progress(
+                progress_callback,
+                "batch_processed",
+                current_batch_num=batch_number,
+                total_batches=total_batches,
+                images_in_batch=len(batch_processed_records),
+                cumulative_processed_this_run=processed_count,
+                total_images_to_process=len(records),
+            )
 
     _store_processed_records(db_path_str, processed_records)
     return processed_count
@@ -118,7 +143,6 @@ def process_images(
     model_param=None,
     processor_param=None,
     device=None,
-    model_type_param_ext=None,
     progress_callback=None,
     batch_size_param=128,
     db_path_str: str | None = None,
@@ -163,7 +187,6 @@ def process_images(
             model_param,
             processor_param,
             device,
-            model_type_param_ext,
             batch_size_param,
             progress_callback,
         )
@@ -206,7 +229,6 @@ def process_images(
                     model_param,
                     processor_param,
                     device,
-                    model_type_param_ext,
                     batch_size_param,
                 )
 
@@ -223,7 +245,6 @@ def db_add_folders(
     model_obj,
     processor_obj,
     device: torch.device,
-    model_type_str: str,
     batch_size: int,
     progress_callback=None,
 ):
@@ -239,7 +260,6 @@ def db_add_folders(
         model_param=model_obj,
         processor_param=processor_obj,
         device=device,
-        model_type_param_ext=model_type_str,
         progress_callback=progress_callback,
         batch_size_param=batch_size,
         db_path_str=db_path_str,
@@ -268,7 +288,6 @@ def db_update_indexed_folders(
     model_obj,
     processor_obj,
     device: torch.device,
-    model_type_str: str,
     batch_size: int,
 ):
     start_time = time.time()
@@ -283,7 +302,6 @@ def db_update_indexed_folders(
             model_param=model_obj,
             processor_param=processor_obj,
             device=device,
-            model_type_param_ext=model_type_str,
             batch_size_param=batch_size,
             db_path_str=db_path_str,
         )
@@ -384,7 +402,6 @@ if __name__ == "__main__":
             model_obj=model,
             processor_obj=processor,
             device=device,
-            model_type_str=model_type,
             batch_size=args.batch_size,
         )
     elif args.update:
@@ -394,7 +411,6 @@ if __name__ == "__main__":
             model_obj=model,
             processor_obj=processor,
             device=device,
-            model_type_str=model_type,
             batch_size=args.batch_size,
         )
     elif args.delete_folder:

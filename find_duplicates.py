@@ -58,7 +58,6 @@ def compute_embeddings(
     model,
     processor,
     device: torch.device | str,
-    model_type: str,
     batch_size: int,
 ) -> Tuple[np.ndarray, List[str]]:
     """Compute normalized embeddings for images in batches."""
@@ -77,7 +76,6 @@ def compute_embeddings(
                 model,
                 processor,
                 device,
-                model_type,
             )
         except Exception as e:
             print(f"Error embedding batch starting at {batch_index}: {e}")
@@ -146,7 +144,6 @@ def find_duplicates_in_folder(
     recursive: bool,
     active_model,
     active_processor,
-    active_model_type: str,
     active_chroma_client,
     db_path: str,
     device: torch.device | str,
@@ -160,7 +157,6 @@ def find_duplicates_in_folder(
         recursive=recursive,
         active_model=active_model,
         active_processor=active_processor,
-        active_model_type=active_model_type,
         active_chroma_client=active_chroma_client,
         db_path=db_path,
         device=device,
@@ -175,7 +171,6 @@ def find_duplicates_in_folders(
     recursive: bool,
     active_model,
     active_processor,
-    active_model_type: str,
     active_chroma_client,
     db_path: str,
     device: torch.device | str,
@@ -244,7 +239,6 @@ def find_duplicates_in_folders(
             model=active_model,
             processor=active_processor,
             device=device,
-            model_type=active_model_type,
             batch_size=batch_size,
         )
         if miss_embeddings.size > 0 and len(miss_processed) > 0:

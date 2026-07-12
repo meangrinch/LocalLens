@@ -328,7 +328,6 @@ def handle_update_sync_button_click(
             model_obj=active_model_state_val,
             processor_obj=active_processor_state_val,
             device=device,
-            model_type_str=active_model_type_state_val,
             batch_size=batch_size_ui,
         )
         gr.Info(f"Database '{current_db_path}' update process completed successfully.")
@@ -421,7 +420,6 @@ def handle_add_folder_button_click(
             model_obj=active_model_state_val,
             processor_obj=active_processor_state_val,
             device=device,
-            model_type_str=active_model_type_state_val,
             batch_size=batch_size_ui,
             progress_callback=update_gradio_progress,
         )
@@ -618,7 +616,6 @@ def handle_find_duplicates(
                 recursive=True,
                 active_model=active_model_state_val,
                 active_processor=active_processor_state_val,
-                active_model_type=active_model_type_state_val,
                 active_chroma_client=active_chroma_client_state_val,
                 db_path=current_db_path,
                 device=device,
@@ -632,7 +629,6 @@ def handle_find_duplicates(
                 recursive=True,
                 active_model=active_model_state_val,
                 active_processor=active_processor_state_val,
-                active_model_type=active_model_type_state_val,
                 active_chroma_client=active_chroma_client_state_val,
                 db_path=current_db_path,
                 device=device,

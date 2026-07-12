@@ -11,6 +11,9 @@ from transformers import AutoModel, AutoProcessor
 VIDEO_EXTENSIONS_UTILS = [".mp4", ".mov", ".avi", ".mkv", ".webm"]
 TRUST_REMOTE_MODEL_CODE = True
 
+_LOADER_MAX_WORKERS = max(1, (os.cpu_count() or 8) // 2)
+_loader_executor: ThreadPoolExecutor | None = None
+
 
 def get_model_type(model_path: str) -> str:
     """
@@ -53,6 +56,13 @@ def load_model_and_processor(
     return model, processor, model_type
 
 
+def _get_loader_executor() -> ThreadPoolExecutor:
+    global _loader_executor
+    if _loader_executor is None:
+        _loader_executor = ThreadPoolExecutor(max_workers=_LOADER_MAX_WORKERS)
+    return _loader_executor
+
+
 def _extract_video_frame(path: str) -> Image.Image:
     """Extracts the first frame from a video file."""
     cap = cv2.VideoCapture(path)
@@ -86,23 +96,22 @@ def _load_and_convert_image(
         return None, None, f"Warning: Error processing {path}: {e}"
 
 
-def extract_features(
-    image_paths_batch: list[str],
-    model,
-    processor,
-    device: torch.device | str,
-    model_type: str = None,
-):
-    """
-    Extracts features for a batch.
-    Handles variable resolutions (NaFlex) via padding.
-    """
-    valid_images_pil = []
-    valid_paths = []
+def _empty_features(device: torch.device | str) -> np.ndarray:
+    device_type = device.type if hasattr(device, "type") else device
+    use_fp16 = device_type != "cpu"
+    return np.array([]).astype(np.float16 if use_fp16 else np.float32)
 
-    num_workers = os.cpu_count() or 4
-    with ThreadPoolExecutor(max_workers=num_workers) as executor:
-        results = list(executor.map(_load_and_convert_image, image_paths_batch))
+
+def decode_images(
+    image_paths_batch: list[str],
+) -> tuple[list[Image.Image], list[str]]:
+    """Load and convert a batch of media paths to RGB PIL images."""
+    valid_images_pil: list[Image.Image] = []
+    valid_paths: list[str] = []
+
+    results = list(
+        _get_loader_executor().map(_load_and_convert_image, image_paths_batch)
+    )
 
     for img_pil, successful_path, error_msg in results:
         if img_pil and successful_path:
@@ -111,25 +120,66 @@ def extract_features(
         elif error_msg:
             print(error_msg)
 
+    return valid_images_pil, valid_paths
+
+
+def preprocess_images_cpu(images: list[Image.Image], processor):
+    """Run the HF processor on CPU only so this can overlap with GPU work."""
+    # padding=True to prevent crashes with 'naflex' models
+    return processor(images=images, return_tensors="pt", padding=True)
+
+
+def prepare_image_batch(
+    image_paths_batch: list[str],
+    processor,
+) -> tuple[object | None, list[str]]:
+    """
+    Decode media and run CPU-side preprocessing for one batch.
+
+    Returns (inputs_on_cpu, valid_paths). inputs is None when nothing decoded.
+    Device transfer is deferred so this stage can run while the GPU embeds.
+    """
+    valid_images_pil, valid_paths = decode_images(image_paths_batch)
     if not valid_images_pil:
-        device_type = device.type if hasattr(device, "type") else device
-        use_fp16 = device_type != "cpu"
-        return np.array([]).astype(np.float16 if use_fp16 else np.float32), []
+        return None, []
+
+    inputs = preprocess_images_cpu(valid_images_pil, processor)
+    return inputs, valid_paths
+
+
+def embed_prepared_batch(
+    inputs,
+    model,
+    device: torch.device | str,
+) -> np.ndarray:
+    """Move preprocessed inputs to device and run image embedding."""
+    inputs = inputs.to(device)
 
     with torch.no_grad():
-        # padding=True to prevent crashes with 'naflex' models
-        inputs = processor(
-            images=valid_images_pil, return_tensors="pt", padding=True
-        ).to(device)
-
         image_features = model.get_image_features(**inputs)
-
         image_features = F.normalize(image_features, p=2, dim=-1)
-
         features_np = image_features.float().cpu().numpy()
 
         device_type = device.type if hasattr(device, "type") else device
         target_type = np.float16 if device_type != "cpu" else np.float32
         features_np = features_np.astype(target_type)
 
+    return features_np
+
+
+def extract_features(
+    image_paths_batch: list[str],
+    model,
+    processor,
+    device: torch.device | str,
+):
+    """
+    Extracts features for a batch.
+    Handles variable resolutions (NaFlex) via padding.
+    """
+    inputs, valid_paths = prepare_image_batch(image_paths_batch, processor)
+    if inputs is None:
+        return _empty_features(device), []
+
+    features_np = embed_prepared_batch(inputs, model, device)
     return features_np, valid_paths
