@@ -39,17 +39,6 @@ Download the standalone zip from the releases page: [Portable Build](https://git
 - **Windows:** Bundled Python/Git included; no additional requirements
 - **Linux/macOS:** Python 3.10+ and Git must be installed on your system
 
-**Setup:**
-
-1. Extract the zip file
-2. Run the setup script for your platform:
-   - **Windows:** Double-click `setup.bat`
-   - **Linux/macOS:** Run `./setup.sh` in terminal
-3. The setup wizard will:
-   - Detect your GPU and install the appropriate PyTorch version
-   - Install all required dependencies
-   - Create a launcher script (`start-webui.bat` or `start-webui.sh`)
-
 > [!TIP]
 > In the event that you need to transfer to a fresh portable package:
 >
@@ -120,8 +109,7 @@ The Gradio gallery is launched with broad local file access by default so it can
 
 ### Portable Package
 
-- **Windows:** Run `update.bat` from the portable package root
-- **Linux/macOS:** Run `./update.sh` from the portable package root
+- Run `update.bat` (Windows) or `./update.sh` (Linux/macOS) from the portable package root
 
 ### Manual Install
 
