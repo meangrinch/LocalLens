@@ -45,8 +45,8 @@ def _delete_chroma_ids(collection, media_ids: list[str]) -> None:
             print(f"Error deleting batch: {e}")
 
 
-def _store_processed_records(db_path_str: str, records) -> None:
-    IndexStore(db_path_str).upsert_media_records(list(records))
+def _store_processed_records(store: IndexStore, records) -> None:
+    store.upsert_media_records(list(records))
 
 
 def _upsert_records_with_store(
@@ -62,8 +62,8 @@ def _upsert_records_with_store(
     if not records:
         return 0
 
+    store = IndexStore(db_path_str)
     record_by_key = {record.path_key: record for record in records}
-    processed_records = []
     processed_count = 0
     batch_groups = list(batched(records, batch_size_param))
     total_batches = len(batch_groups)
@@ -113,11 +113,11 @@ def _upsert_records_with_store(
                         record.to_metadata() for record in batch_processed_records
                     ],
                 )
+                _store_processed_records(store, batch_processed_records)
             except Exception as e:
                 print(f"Error processing batch: {e}")
                 continue
 
-            processed_records.extend(batch_processed_records)
             processed_count += len(batch_processed_records)
             batch_duration = time.perf_counter() - batch_start
             print(
@@ -135,7 +135,6 @@ def _upsert_records_with_store(
                 batch_duration_seconds=batch_duration,
             )
 
-    _store_processed_records(db_path_str, processed_records)
     return processed_count
 
 
