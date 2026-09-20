@@ -26,6 +26,7 @@ if sys.platform == "win32":
 import html
 import os
 import time
+from pathlib import Path
 
 import chromadb
 import gradio as gr
@@ -1414,101 +1415,7 @@ def get_allowed_gallery_paths() -> list[str]:
     return paths
 
 
-css_gallary = """
-#gallery .grid-wrap {
-    max-height: 900px !important;
-}
-
-/* Hide the caption on the thumbnail grid */
-#gallery .caption-label {
-    display: none !important;
-}
-
-/* Hide tab navigation header when not in duplicate mode */
-.hide-tabs-nav > .tab-wrapper {
-    display: none !important;
-}
-
-#main_tabs {
-    gap: 0px !important;
-}
-
-/* Duplicate Inspector styles */
-#dup_status {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    text-align: center;
-}
-
-#dup_status p {
-    margin: 0;
-    font-size: 14px;
-    font-weight: 500;
-    color: var(--body-text-color);
-}
-
-.dup-nav-row {
-    align-items: center;
-}
-
-.dup-info-html {
-    padding: 0 !important;
-    background: var(--background-fill-secondary) !important;
-}
-
-.dup-info-card {
-    background: var(--background-fill-secondary);
-    border-top: 1px solid var(--border-color-primary);
-    padding: 10px 12px;
-}
-
-.dup-info-caption {
-    font-weight: 600;
-    font-size: 13px;
-    color: var(--body-text-color);
-    margin-bottom: 8px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.dup-info-grid {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-}
-
-.dup-info-row {
-    display: flex;
-    align-items: center;
-    font-size: 12px;
-    line-height: 1.4;
-}
-
-.dup-info-label {
-    width: 75px;
-    flex-shrink: 0;
-    color: var(--body-text-color-subdued, #737373);
-}
-
-.dup-info-val {
-    color: var(--body-text-color);
-    font-weight: 500;
-    display: flex;
-    align-items: center;
-    min-width: 0;
-}
-
-.dup-info-path {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-family: var(--font-mono, monospace);
-    font-size: 11px;
-    opacity: 0.8;
-}
-"""
+css_path = Path(__file__).with_name("style.css")
 
 js_credits = """
 function() {
@@ -1542,7 +1449,7 @@ if __name__ == "__main__":
     with gr.Blocks(
         theme=gr.themes.Default(primary_hue="purple"),
         js=js_credits,
-        css=css_gallary,
+        css_paths=str(css_path),
         title="Local Lens",
     ) as app:
         gr.Markdown("# Local Lens")
