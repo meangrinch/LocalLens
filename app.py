@@ -53,7 +53,7 @@ from index_store import (
 )
 from model_utils import load_model_and_processor
 
-__version__ = "1.5.2"
+__version__ = "1.6.0"
 
 # --- Configuration ---
 AVAILABLE_MODELS = [
