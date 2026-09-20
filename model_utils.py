@@ -53,6 +53,8 @@ def load_model_and_processor(
 
     model_type = get_model_type(model_path)
 
+    print(f"Model loaded: {model_path}")
+
     return model, processor, model_type
 
 
