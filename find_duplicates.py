@@ -279,3 +279,60 @@ def find_duplicates_in_folders(
     )
 
     return pairs
+
+
+def determine_auto_trash_target(info_a: dict, info_b: dict) -> str | None:
+    """Decide which image in a pair to auto-trash (smaller pixel count or smaller file size)."""
+    if not info_a.get("exists") or not info_b.get("exists"):
+        return None
+
+    pixels_a = info_a.get("pixel_count") or 0
+    pixels_b = info_b.get("pixel_count") or 0
+    if pixels_a < pixels_b:
+        return "left"
+    if pixels_b < pixels_a:
+        return "right"
+
+    size_a = info_a.get("size") or 0
+    size_b = info_b.get("size") or 0
+    if size_a < size_b:
+        return "left"
+    if size_b < size_a:
+        return "right"
+
+    return None
+
+
+def filter_resolved_pairs(pairs: list, trashed_path: str) -> list:
+    """Filter out pairs containing a trashed file path."""
+    target_key = path_key(trashed_path)
+    return [
+        p
+        for p in pairs
+        if path_key(p[1]) != target_key and path_key(p[2]) != target_key
+    ]
+
+
+def _extract_item_path(item) -> str:
+    if not item:
+        return ""
+    if isinstance(item, (list, tuple)):
+        return str(item[0]) if item else ""
+    if isinstance(item, dict):
+        img = item.get("image")
+        if isinstance(img, dict):
+            return str(img.get("path") or "")
+        return str(img or item.get("name") or "")
+    return getattr(item, "name", str(item))
+
+
+def filter_gallery_items(gallery_items: list, trashed_path: str) -> list:
+    """Filter out gallery items matching a trashed file path."""
+    if not gallery_items:
+        return []
+    target_key = path_key(trashed_path)
+    return [
+        item
+        for item in gallery_items
+        if path_key(_extract_item_path(item)) != target_key
+    ]

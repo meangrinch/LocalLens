@@ -23,6 +23,7 @@ if sys.platform == "win32":
 
     _ProactorBasePipeTransport._call_connection_lost = _safe_connection_lost
 
+import html
 import os
 import time
 
@@ -34,14 +35,21 @@ import torch.nn.functional as F
 
 from build_db import db_add_folders, db_delete_folder, db_update_indexed_folders
 from device import get_best_device, get_best_dtype
-from find_duplicates import find_duplicates_in_folder, find_duplicates_in_folders
+from find_duplicates import (
+    filter_gallery_items,
+    filter_resolved_pairs,
+    find_duplicates_in_folder,
+    find_duplicates_in_folders,
+)
 from index_store import (
     IndexStore,
+    get_media_file_info,
     is_path_under_folder,
     migrate_legacy_db,
     path_and_caption_from_result,
     query_filter_for_folder,
     relative_caption,
+    trash_and_delete_indexed_media,
 )
 from model_utils import load_model_and_processor
 
@@ -547,6 +555,219 @@ def get_relative_caption(abs_path: str, indexed_folders_text: str) -> str:
     return abs_path
 
 
+def render_duplicate_pair_view(
+    pairs: list,
+    current_idx: int,
+    indexed_folders_text: str,
+):
+    """Generates UI updates for the side-by-side duplicate reviewer."""
+    if not pairs or current_idx < 0 or current_idx >= len(pairs):
+        return (
+            gr.Column(visible=False),
+            0,
+            "No duplicate pairs to review",
+            None,
+            "",
+            None,
+            "",
+            gr.Button(value="Move to Recycle Bin", interactive=False),
+            gr.Button(value="Move to Recycle Bin", interactive=False),
+            gr.Button(interactive=False),
+            gr.Button(interactive=False),
+        )
+
+    sim, path_a, path_b = pairs[current_idx]
+    folders = (
+        parse_indexed_folders_text(indexed_folders_text) if indexed_folders_text else []
+    )
+    info_a = get_media_file_info(path_a, base_folders=folders)
+    info_b = get_media_file_info(path_b, base_folders=folders)
+
+    status_text = (
+        f"**Duplicate Pair {current_idx + 1} of {len(pairs)}** &nbsp;&bull;&nbsp; "
+        f"**{sim * 100:.1f}%** Similarity"
+    )
+
+    def format_card_html(info: dict) -> str:
+        if not info.get("exists"):
+            missing_path = html.escape(str(info.get("path", "")))
+            return (
+                f"<div class='dup-info-card'>"
+                f"  <div class='dup-info-caption' style='color: var(--body-text-color-subdued, #888);'>File Missing or Removed</div>"
+                f"  <div class='dup-info-path' title='{missing_path}'>{missing_path}</div>"
+                f"</div>"
+            )
+
+        caption = html.escape(str(info.get("caption", "")))
+        full_path = html.escape(str(info.get("path", "")))
+        dim_str = html.escape(str(info.get("dim_str", "Unknown")))
+        size_str = html.escape(str(info.get("size_str", "0 B")))
+        mtime_str = html.escape(str(info.get("mtime_str", "Unknown")))
+
+        return (
+            f"<div class='dup-info-card'>"
+            f"  <div class='dup-info-caption' title='{full_path}'>{caption}</div>"
+            f"  <div class='dup-info-grid'>"
+            f"    <div class='dup-info-row'>"
+            f"      <span class='dup-info-label'>Resolution</span>"
+            f"      <span class='dup-info-val'>{dim_str}</span>"
+            f"    </div>"
+            f"    <div class='dup-info-row'>"
+            f"      <span class='dup-info-label'>File Size</span>"
+            f"      <span class='dup-info-val'>{size_str}</span>"
+            f"    </div>"
+            f"    <div class='dup-info-row'>"
+            f"      <span class='dup-info-label'>Modified</span>"
+            f"      <span class='dup-info-val'>{mtime_str}</span>"
+            f"    </div>"
+            f"    <div class='dup-info-row'>"
+            f"      <span class='dup-info-label'>Location</span>"
+            f"      <span class='dup-info-val dup-info-path' title='{full_path}'>{full_path}</span>"
+            f"    </div>"
+            f"  </div>"
+            f"</div>"
+        )
+
+    info_a_html = format_card_html(info_a)
+    info_b_html = format_card_html(info_b)
+
+    can_trash_a = info_a["exists"]
+    can_trash_b = info_b["exists"]
+
+    label_a = "Move to Recycle Bin" if can_trash_a else "Remove Record"
+    label_b = "Move to Recycle Bin" if can_trash_b else "Remove Record"
+
+    has_prev = current_idx > 0
+    has_next = current_idx < len(pairs) - 1
+
+    return (
+        gr.Column(visible=True),
+        current_idx,
+        status_text,
+        path_a if can_trash_a else None,
+        info_a_html,
+        path_b if can_trash_b else None,
+        info_b_html,
+        gr.Button(value=label_a, interactive=True),
+        gr.Button(value=label_b, interactive=True),
+        gr.Button(interactive=has_prev),
+        gr.Button(interactive=has_next),
+    )
+
+
+def handle_duplicate_nav(
+    step: int,
+    current_idx: int,
+    pairs: list,
+    indexed_folders_text: str,
+):
+    """Navigate backward or forward through duplicate pairs."""
+    if not pairs:
+        new_idx = 0
+    else:
+        new_idx = max(0, min(len(pairs) - 1, current_idx + step))
+    return render_duplicate_pair_view(pairs, new_idx, indexed_folders_text)
+
+
+def handle_trash_duplicate(
+    target_side: str,
+    current_idx: int,
+    pairs: list,
+    gallery_images: list,
+    current_db_path: str,
+    chroma_client,
+    indexed_folders_text: str,
+):
+    """Trashes the selected image from a duplicate pair and updates the reviewer."""
+    if not pairs or current_idx < 0 or current_idx >= len(pairs):
+        return (
+            gallery_images,
+            pairs,
+            gr.Tabs(selected="tab_search", elem_classes=["hide-tabs-nav"]),
+            *render_duplicate_pair_view([], 0, indexed_folders_text),
+        )
+
+    sim, path_a, path_b = pairs[current_idx]
+    folders = (
+        parse_indexed_folders_text(indexed_folders_text) if indexed_folders_text else []
+    )
+    info_a = get_media_file_info(path_a, base_folders=folders)
+    info_b = get_media_file_info(path_b, base_folders=folders)
+
+    if target_side == "left":
+        target_path = path_a
+        target_info = info_a
+    elif target_side == "right":
+        target_path = path_b
+        target_info = info_b
+    else:
+        return (
+            gallery_images,
+            pairs,
+            gr.Tabs(selected="tab_duplicates", elem_classes=["show-tabs-nav"]),
+            *render_duplicate_pair_view(pairs, current_idx, indexed_folders_text),
+        )
+
+    collection = None
+    if chroma_client:
+        try:
+            collection = chroma_client.get_collection("images")
+        except Exception as e:
+            print(f"Error accessing collection: {e}")
+
+    file_existed = target_info.get("exists", False)
+    success = trash_and_delete_indexed_media(target_path, current_db_path, collection)
+    if success:
+        file_name = os.path.basename(target_path)
+        if file_existed:
+            gr.Info(f"Moved '{file_name}' to Recycle Bin.")
+        else:
+            gr.Info(f"Removed missing record '{file_name}' from index.")
+    else:
+        gr.Warning(
+            f"Could not trash '{target_path}'. File may be locked by another process or permission denied."
+        )
+        return (
+            gallery_images,
+            pairs,
+            gr.Tabs(selected="tab_duplicates", elem_classes=["show-tabs-nav"]),
+            *render_duplicate_pair_view(pairs, current_idx, indexed_folders_text),
+        )
+
+    remaining_pairs = filter_resolved_pairs(pairs, target_path)
+    updated_gallery = filter_gallery_items(gallery_images, target_path)
+
+    new_idx = (
+        max(0, min(len(remaining_pairs) - 1, current_idx)) if remaining_pairs else 0
+    )
+    if not remaining_pairs:
+        gr.Info("All duplicate pairs have been resolved.")
+        selected_tabs = gr.Tabs(selected="tab_search", elem_classes=["hide-tabs-nav"])
+    else:
+        selected_tabs = gr.Tabs(
+            selected="tab_duplicates", elem_classes=["show-tabs-nav"]
+        )
+
+    view_updates = render_duplicate_pair_view(
+        remaining_pairs, new_idx, indexed_folders_text
+    )
+    return (
+        updated_gallery,
+        remaining_pairs,
+        selected_tabs,
+        *view_updates,
+    )
+
+
+def empty_duplicate_results():
+    return (
+        [],
+        [],
+        gr.Tabs(selected="tab_search", elem_classes=["hide-tabs-nav"]),
+        *render_duplicate_pair_view([], 0, ""),
+    )
+
+
 def handle_find_duplicates(
     duplicate_folder_path: str,
     duplicate_threshold: float,
@@ -565,11 +786,11 @@ def handle_find_duplicates(
     """Finds duplicate images in a folder using the active model and ChromaDB."""
     if not duplicate_folder_path:
         gr.Warning("Please select a folder from the indexed folders.")
-        return []
+        return empty_duplicate_results()
 
     if not current_model_path or not current_db_path:
         gr.Warning("No active model or DB path. Please select a model first.")
-        return []
+        return empty_duplicate_results()
 
     if (
         not active_model_state_val
@@ -580,7 +801,7 @@ def handle_find_duplicates(
         gr.Warning(
             "Model components (model, processor, type, or DB client) not loaded. Please re-select a model."
         )
-        return []
+        return empty_duplicate_results()
 
     scan_all_folders = duplicate_folder_path == "All"
     if scan_all_folders:
@@ -593,7 +814,7 @@ def handle_find_duplicates(
         ]
         if not duplicate_folders:
             gr.Warning("No indexed folders are available to scan.")
-            return []
+            return empty_duplicate_results()
         if missing_folders:
             print(
                 "Skipping missing indexed folders: "
@@ -603,7 +824,7 @@ def handle_find_duplicates(
     elif not os.path.isdir(duplicate_folder_path):
         print(f"Folder not found on disk: {os.path.abspath(duplicate_folder_path)}")
         gr.Warning(f"Folder not found: {duplicate_folder_path}")
-        return []
+        return empty_duplicate_results()
     else:
         duplicate_folders = [duplicate_folder_path]
 
@@ -678,7 +899,21 @@ def handle_find_duplicates(
         print(f"Returning {len(pairs)} duplicate pairs.")
         end_time = time.time()
         print(f"Search completed in {(end_time - start_time):.2f}s")
-        return gallery_images
+        view_updates = render_duplicate_pair_view(pairs, 0, indexed_folders_text)
+        if not pairs:
+            selected_tabs = gr.Tabs(
+                selected="tab_search", elem_classes=["hide-tabs-nav"]
+            )
+        else:
+            selected_tabs = gr.Tabs(
+                selected="tab_search", elem_classes=["show-tabs-nav"]
+            )
+        return (
+            gallery_images,
+            pairs,
+            selected_tabs,
+            *view_updates,
+        )
 
     except Exception as e:
         print(f"Error finding duplicates: {e}")
@@ -686,7 +921,7 @@ def handle_find_duplicates(
         progress(1, desc="Error.")
         end_time = time.time()
         print(f"Search completed in {(end_time - start_time):.2f}s")
-        return []
+        return empty_duplicate_results()
 
 
 def search(
@@ -1156,8 +1391,15 @@ def random_search(
 
 
 def clear_search_and_gallery():
-    """Clears the search query textbox, image input, and the results gallery."""
-    return "", None, []
+    """Clears search inputs, gallery, duplicate state, and hides duplicate inspector."""
+    return (
+        "",
+        None,
+        [],
+        [],
+        gr.Tabs(selected="tab_search", elem_classes=["hide-tabs-nav"]),
+        *render_duplicate_pair_view([], 0, ""),
+    )
 
 
 def get_allowed_gallery_paths() -> list[str]:
@@ -1180,6 +1422,91 @@ css_gallary = """
 /* Hide the caption on the thumbnail grid */
 #gallery .caption-label {
     display: none !important;
+}
+
+/* Hide tab navigation header when not in duplicate mode */
+.hide-tabs-nav > .tab-wrapper {
+    display: none !important;
+}
+
+#main_tabs {
+    gap: 0px !important;
+}
+
+/* Duplicate Inspector styles */
+#dup_status {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+}
+
+#dup_status p {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--body-text-color);
+}
+
+.dup-nav-row {
+    align-items: center;
+}
+
+.dup-info-html {
+    padding: 0 !important;
+    background: var(--background-fill-secondary) !important;
+}
+
+.dup-info-card {
+    background: var(--background-fill-secondary);
+    border-top: 1px solid var(--border-color-primary);
+    padding: 10px 12px;
+}
+
+.dup-info-caption {
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--body-text-color);
+    margin-bottom: 8px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dup-info-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.dup-info-row {
+    display: flex;
+    align-items: center;
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+.dup-info-label {
+    width: 75px;
+    flex-shrink: 0;
+    color: var(--body-text-color-subdued, #737373);
+}
+
+.dup-info-val {
+    color: var(--body-text-color);
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    min-width: 0;
+}
+
+.dup-info-path {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: var(--font-mono, monospace);
+    font-size: 11px;
+    opacity: 0.8;
 }
 """
 
@@ -1229,6 +1556,9 @@ if __name__ == "__main__":
         logit_scale_state = gr.State(None)
         logit_bias_state = gr.State(None)
         chroma_client_state = gr.State(None)
+
+        duplicate_pairs_state = gr.State([])
+        duplicate_pair_idx_state = gr.State(0)
 
         with gr.Row():
             # Left Column: Search, Model/DB Management, Parameters
@@ -1360,14 +1690,98 @@ if __name__ == "__main__":
                         info="Show detailed confidence scores and similarity metrics in console output.",
                     )
 
-            # Right Column: Gallery
+            # Right Column: Tabs (Search Results & Duplicate Inspector)
             with gr.Column(scale=3):
-                results_gallery = gr.Gallery(
-                    label="Search Results",
-                    columns=3,
-                    show_label=True,
-                    elem_id="gallery",
-                )
+                with gr.Tabs(
+                    selected="tab_search",
+                    elem_id="main_tabs",
+                    elem_classes=["hide-tabs-nav"],
+                ) as main_tabs:
+                    with gr.Tab("Search Results", id="tab_search"):
+                        results_gallery = gr.Gallery(
+                            label="Search Results",
+                            columns=3,
+                            show_label=False,
+                            elem_id="gallery",
+                            interactive=False,
+                        )
+
+                    with gr.Tab("Duplicate Inspector", id="tab_duplicates"):
+                        with gr.Column(visible=False) as duplicate_inspector_group:
+                            with gr.Row(elem_classes=["dup-nav-row"]):
+                                prev_pair_btn = gr.Button("Previous Pair", min_width=50)
+                                pair_status_markdown = gr.Markdown(
+                                    "Pair 0 of 0", elem_id="dup_status"
+                                )
+                                next_pair_btn = gr.Button("Next Pair", min_width=50)
+
+                            with gr.Row():
+                                with gr.Column():
+                                    with gr.Group():
+                                        img_a_preview = gr.Image(
+                                            label="Image A",
+                                            interactive=False,
+                                            type="filepath",
+                                            show_label=True,
+                                        )
+                                        img_a_info_html = gr.HTML(
+                                            padding=False,
+                                            elem_classes=["dup-info-html"],
+                                        )
+                                    trash_a_btn = gr.Button(
+                                        "Move to Recycle Bin",
+                                        variant="stop",
+                                        min_width=50,
+                                    )
+                                with gr.Column():
+                                    with gr.Group():
+                                        img_b_preview = gr.Image(
+                                            label="Image B",
+                                            interactive=False,
+                                            type="filepath",
+                                            show_label=True,
+                                        )
+                                        img_b_info_html = gr.HTML(
+                                            padding=False,
+                                            elem_classes=["dup-info-html"],
+                                        )
+                                    trash_b_btn = gr.Button(
+                                        "Move to Recycle Bin",
+                                        variant="stop",
+                                        min_width=50,
+                                    )
+
+        inspector_outputs = [
+            duplicate_inspector_group,
+            duplicate_pair_idx_state,
+            pair_status_markdown,
+            img_a_preview,
+            img_a_info_html,
+            img_b_preview,
+            img_b_info_html,
+            trash_a_btn,
+            trash_b_btn,
+            prev_pair_btn,
+            next_pair_btn,
+        ]
+        inspector_and_gallery_outputs = [
+            results_gallery,
+            duplicate_pairs_state,
+            main_tabs,
+            *inspector_outputs,
+        ]
+        duplicate_view_reset_outputs = [
+            duplicate_pairs_state,
+            main_tabs,
+            *inspector_outputs,
+        ]
+
+        def reset_duplicate_view():
+            return (
+                [],
+                gr.Tabs(selected="tab_search", elem_classes=["hide-tabs-nav"]),
+                *render_duplicate_pair_view([], 0, ""),
+            )
 
         load_outputs = [
             active_model_path_state,
@@ -1411,6 +1825,10 @@ if __name__ == "__main__":
             fn=update_all_folder_dropdowns,
             inputs=[indexed_folders_display],
             outputs=[active_folder_dropdown, duplicate_folder_dropdown],
+        ).then(
+            fn=reset_duplicate_view,
+            inputs=[],
+            outputs=duplicate_view_reset_outputs,
         )
 
         model_dropdown.change(
@@ -1422,6 +1840,10 @@ if __name__ == "__main__":
             fn=update_all_folder_dropdowns,
             inputs=[indexed_folders_display],
             outputs=[active_folder_dropdown, duplicate_folder_dropdown],
+        ).then(
+            fn=reset_duplicate_view,
+            inputs=[],
+            outputs=duplicate_view_reset_outputs,
         )
 
         update_db_button.click(
@@ -1502,8 +1924,51 @@ if __name__ == "__main__":
                 initial_n_results_slider,
                 indexed_folders_display,
             ],
-            outputs=[results_gallery],
+            outputs=inspector_and_gallery_outputs,
             show_progress="full",
+        )
+
+        trash_inputs = [
+            duplicate_pair_idx_state,
+            duplicate_pairs_state,
+            results_gallery,
+            active_db_path_state,
+            chroma_client_state,
+            indexed_folders_display,
+        ]
+
+        trash_a_btn.click(
+            fn=lambda idx, pairs, gal, db, client, text: handle_trash_duplicate(
+                "left", idx, pairs, gal, db, client, text
+            ),
+            inputs=trash_inputs,
+            outputs=inspector_and_gallery_outputs,
+        )
+
+        trash_b_btn.click(
+            fn=lambda idx, pairs, gal, db, client, text: handle_trash_duplicate(
+                "right", idx, pairs, gal, db, client, text
+            ),
+            inputs=trash_inputs,
+            outputs=inspector_and_gallery_outputs,
+        )
+
+        nav_inputs = [
+            duplicate_pair_idx_state,
+            duplicate_pairs_state,
+            indexed_folders_display,
+        ]
+
+        prev_pair_btn.click(
+            fn=lambda idx, pairs, text: handle_duplicate_nav(-1, idx, pairs, text),
+            inputs=nav_inputs,
+            outputs=inspector_outputs,
+        )
+
+        next_pair_btn.click(
+            fn=lambda idx, pairs, text: handle_duplicate_nav(1, idx, pairs, text),
+            inputs=nav_inputs,
+            outputs=inspector_outputs,
         )
 
         search_inputs = [
@@ -1525,8 +1990,25 @@ if __name__ == "__main__":
             active_folder_dropdown,
         ]
 
-        query_textbox.submit(fn=search, inputs=search_inputs, outputs=[results_gallery])
-        search_button.click(fn=search, inputs=search_inputs, outputs=[results_gallery])
+        query_textbox.submit(
+            fn=reset_duplicate_view,
+            inputs=[],
+            outputs=duplicate_view_reset_outputs,
+        ).then(
+            fn=search,
+            inputs=search_inputs,
+            outputs=[results_gallery],
+        )
+
+        search_button.click(
+            fn=reset_duplicate_view,
+            inputs=[],
+            outputs=duplicate_view_reset_outputs,
+        ).then(
+            fn=search,
+            inputs=search_inputs,
+            outputs=[results_gallery],
+        )
 
         random_search_inputs = [
             initial_n_results_slider,
@@ -1535,13 +2017,26 @@ if __name__ == "__main__":
             active_folder_dropdown,
         ]
         feeling_lucky_button.click(
-            fn=random_search, inputs=random_search_inputs, outputs=[results_gallery]
+            fn=reset_duplicate_view,
+            inputs=[],
+            outputs=duplicate_view_reset_outputs,
+        ).then(
+            fn=random_search,
+            inputs=random_search_inputs,
+            outputs=[results_gallery],
         )
 
         clear_button.click(
             fn=clear_search_and_gallery,
             inputs=[],
-            outputs=[query_textbox, query_image_input, results_gallery],
+            outputs=[
+                query_textbox,
+                query_image_input,
+                results_gallery,
+                duplicate_pairs_state,
+                main_tabs,
+                *inspector_outputs,
+            ],
         )
 
     app.launch(inbrowser=True, allowed_paths=get_allowed_gallery_paths())

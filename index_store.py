@@ -7,6 +7,9 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Iterable
 
+import send2trash
+from PIL import Image
+
 INDEX_SCHEMA_VERSION = "1"
 INDEX_DB_FILENAME = "index.sqlite"
 
@@ -542,3 +545,118 @@ def migrate_legacy_db(db_path: str, collection, batch_size: int = 500) -> int:
     if migrated:
         print(f"Migrated {migrated} Chroma records to stable media IDs.")
     return migrated
+
+
+def get_media_file_info(
+    file_path: str,
+    base_folders: list[str] | str | None = None,
+) -> dict:
+    """Retrieve metadata for a media file including dimensions and formatted size."""
+    canonical = canonical_path(file_path)
+
+    caption = canonical
+    if base_folders:
+        folder_list = (
+            [base_folders] if isinstance(base_folders, str) else list(base_folders)
+        )
+        folder_list.sort(key=len, reverse=True)
+        for folder in folder_list:
+            if is_path_under_folder(canonical, folder):
+                caption = relative_caption(canonical, folder)
+                break
+    else:
+        caption = os.path.basename(canonical)
+
+    if not os.path.exists(canonical):
+        return {
+            "path": canonical,
+            "exists": False,
+            "caption": caption,
+            "size": 0,
+            "size_str": "0 B",
+            "dimensions": None,
+            "dim_str": "Unknown",
+            "pixel_count": 0,
+            "mtime": 0,
+            "mtime_str": "Unknown",
+        }
+
+    try:
+        stat = os.stat(canonical)
+        size = stat.st_size
+        mtime = stat.st_mtime
+    except OSError:
+        size = 0
+        mtime = 0
+
+    if size >= 1024 * 1024 * 1024:
+        size_str = f"{size / (1024 * 1024 * 1024):.2f} GB"
+    elif size >= 1024 * 1024:
+        size_str = f"{size / (1024 * 1024):.2f} MB"
+    elif size >= 1024:
+        size_str = f"{size / 1024:.1f} KB"
+    else:
+        size_str = f"{size} B"
+
+    try:
+        mtime_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(mtime))
+    except (OSError, OverflowError, ValueError):
+        mtime_str = "Unknown"
+
+    dimensions = None
+    dim_str = "Unknown"
+    pixel_count = 0
+    try:
+        with Image.open(canonical) as img:
+            w, h = img.size
+            dimensions = (w, h)
+            dim_str = f"{w} × {h}"
+            pixel_count = w * h
+    except Exception:
+        pass
+
+    return {
+        "path": canonical,
+        "exists": True,
+        "caption": caption,
+        "size": size,
+        "size_str": size_str,
+        "dimensions": dimensions,
+        "dim_str": dim_str,
+        "pixel_count": pixel_count,
+        "mtime": mtime,
+        "mtime_str": mtime_str,
+    }
+
+
+def trash_and_delete_indexed_media(
+    file_path: str,
+    db_path: str | None = None,
+    collection=None,
+) -> bool:
+    """Move a media file to the OS Recycle Bin / Trash and remove its record from SQLite and ChromaDB."""
+    target_path = canonical_path(file_path)
+    file_existed = os.path.exists(target_path)
+
+    if file_existed:
+        try:
+            send2trash.send2trash(target_path)
+        except Exception as e:
+            print(f"Error moving '{target_path}' to Recycle Bin: {e}")
+            return False
+
+    mid = media_id_for_path(target_path)
+    if db_path:
+        try:
+            store = IndexStore(db_path)
+            store.delete_media_ids([mid])
+        except Exception as e:
+            print(f"Error removing media {mid} from IndexStore: {e}")
+
+    if collection is not None:
+        try:
+            collection.delete(ids=[mid])
+        except Exception as e:
+            print(f"Error removing media {mid} from ChromaDB: {e}")
+
+    return True
