@@ -1826,9 +1826,9 @@ if __name__ == "__main__":
             inputs=[indexed_folders_display],
             outputs=[active_folder_dropdown, duplicate_folder_dropdown],
         ).then(
-            fn=reset_duplicate_view,
+            fn=empty_duplicate_results,
             inputs=[],
-            outputs=duplicate_view_reset_outputs,
+            outputs=inspector_and_gallery_outputs,
         )
 
         model_dropdown.change(
@@ -1841,9 +1841,9 @@ if __name__ == "__main__":
             inputs=[indexed_folders_display],
             outputs=[active_folder_dropdown, duplicate_folder_dropdown],
         ).then(
-            fn=reset_duplicate_view,
+            fn=empty_duplicate_results,
             inputs=[],
-            outputs=duplicate_view_reset_outputs,
+            outputs=inspector_and_gallery_outputs,
         )
 
         update_db_button.click(
