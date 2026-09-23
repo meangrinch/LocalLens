@@ -58,12 +58,14 @@ __version__ = "1.6.1"
 
 # --- Configuration ---
 AVAILABLE_MODELS = [
+    "google/siglip2-so400m-patch14-384",
     "google/siglip2-so400m-patch16-512",
     "apple/DFN5B-CLIP-ViT-H-14-378",
     "google/siglip2-giant-opt-patch16-384",
     "facebook/metaclip-h14-fullcc2.5b",
     "laion/CLIP-ViT-H-14-laion2B-s32B-b79K",
     "openai/clip-vit-large-patch14",
+    "google/siglip2-base-patch16-224",
 ]
 DEFAULT_MODEL_PATH = None
 
@@ -74,6 +76,11 @@ FALLBACK_CLIP_THRESHOLD = 20.0
 FALLBACK_COMBINED_THRESHOLD = 0.45
 FALLBACK_IMAGE_ONLY_THRESHOLD = 0.70
 MODEL_CONFIDENCE_DEFAULTS = {
+    "google/siglip2-so400m-patch14-384": {
+        "siglip_thresh": -8.0,
+        "combined_thresh": 0.50,
+        "image_only_thresh": 0.85,
+    },
     "google/siglip2-so400m-patch16-512": {
         "siglip_thresh": -8.0,
         "combined_thresh": 0.50,
@@ -104,6 +111,11 @@ MODEL_CONFIDENCE_DEFAULTS = {
         "combined_thresh": 0.45,
         "image_only_thresh": 0.70,
     },
+    "google/siglip2-base-patch16-224": {
+        "siglip_thresh": -8.0,
+        "combined_thresh": 0.50,
+        "image_only_thresh": 0.85,
+    },
 }
 
 device = get_best_device()
@@ -117,9 +129,11 @@ def get_simplified_model_identifier(model_path_str: str) -> str:
     model_name_part = parts[-1]
 
     if "siglip2" in model_name_part:
+        if "so400m" in model_name_part and "384" in model_name_part:
+            return "siglip2-so400m-384"
         sub_parts = model_name_part.split("-")
         if len(sub_parts) >= 2:
-            return f"{sub_parts[0]}-{sub_parts[1]}"  # "siglip2-so400m"
+            return f"{sub_parts[0]}-{sub_parts[1]}"  # "siglip2-so400m", "siglip2-base", "siglip2-giant"
         return model_name_part
     elif "clip" in model_name_part:
         sub_parts = model_name_part.split("-")

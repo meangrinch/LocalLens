@@ -9,10 +9,15 @@
 
 ### Vision Embedding Models
 
+- **google/siglip2-so400m-patch14-384:**
+  - **VRAM:** +2.1 GB
+  - **RAM:** +4 GB
+  - **Storage:** +4.58 GB
+
 - **google/siglip2-so400m-patch16-512:**
   - **VRAM:** +2.3 GB
   - **RAM:** +4 GB
-  - **Storage:** +4.55 GB
+  - **Storage:** +4.58 GB
 
 - **apple/DFN5B-CLIP-ViT-H-14-378:**
   - **VRAM:** +2 GB
@@ -38,3 +43,8 @@
   - **VRAM:** +0.9 GB
   - **RAM:** +2 GB
   - **Storage:** +1.71 GB
+
+- **google/siglip2-base-patch16-224:**
+  - **VRAM:** +0.9 GB
+  - **RAM:** +2 GB
+  - **Storage:** +1.54 GB

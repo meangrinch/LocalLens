@@ -9,10 +9,15 @@
 
 ### 视觉嵌入模型
 
+- **google/siglip2-so400m-patch14-384:**
+  - **显存 (VRAM):** +2.1 GB
+  - **内存 (RAM):** +4 GB
+  - **存储空间:** +4.58 GB
+
 - **google/siglip2-so400m-patch16-512:**
   - **显存 (VRAM):** +2.3 GB
   - **内存 (RAM):** +4 GB
-  - **存储空间:** +4.55 GB
+  - **存储空间:** +4.58 GB
 
 - **apple/DFN5B-CLIP-ViT-H-14-378:**
   - **显存 (VRAM):** +2 GB
@@ -38,3 +43,8 @@
   - **显存 (VRAM):** +0.9 GB
   - **内存 (RAM):** +2 GB
   - **存储空间:** +1.71 GB
+
+- **google/siglip2-base-patch16-224:**
+  - **显存 (VRAM):** +0.9 GB
+  - **内存 (RAM):** +2 GB
+  - **存储空间:** +1.54 GB
