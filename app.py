@@ -733,10 +733,8 @@ def handle_trash_duplicate(
     file_existed = target_info.get("exists", False)
     success = trash_and_delete_indexed_media(target_path, current_db_path, collection)
     if success:
-        file_name = os.path.basename(target_path)
-        if file_existed:
-            gr.Info(f"Moved '{file_name}' to Recycle Bin.")
-        else:
+        if not file_existed:
+            file_name = os.path.basename(target_path)
             gr.Info(f"Removed missing record '{file_name}' from index.")
     else:
         gr.Warning(
