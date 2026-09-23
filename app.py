@@ -117,6 +117,17 @@ MODEL_CONFIDENCE_DEFAULTS = {
         "image_only_thresh": 0.85,
     },
 }
+FALLBACK_BATCH_SIZE = 64
+MODEL_BATCH_SIZE_DEFAULTS = {
+    "google/siglip2-so400m-patch14-384": 64,
+    "google/siglip2-so400m-patch16-512": 64,
+    "apple/DFN5B-CLIP-ViT-H-14-378": 32,
+    "google/siglip2-giant-opt-patch16-384": 16,
+    "facebook/metaclip-h14-fullcc2.5b": 64,
+    "laion/CLIP-ViT-H-14-laion2B-s32B-b79K": 64,
+    "openai/clip-vit-large-patch14": 64,
+    "google/siglip2-base-patch16-224": 128,
+}
 
 device = get_best_device()
 dtype = get_best_dtype(device)
@@ -191,6 +202,7 @@ def load_and_switch_model_db(
         None,
         None,
         gr.Dropdown(interactive=False),
+        None,
     )
 
     if not selected_model_path:
@@ -209,6 +221,7 @@ def load_and_switch_model_db(
             FALLBACK_COMBINED_THRESHOLD,
             FALLBACK_IMAGE_ONLY_THRESHOLD,
             gr.Dropdown(interactive=True),
+            FALLBACK_BATCH_SIZE,
         )
         return
 
@@ -217,6 +230,9 @@ def load_and_switch_model_db(
     ui_clip_thresh_to_set = FALLBACK_CLIP_THRESHOLD
     ui_combined_thresh_to_set = FALLBACK_COMBINED_THRESHOLD
     ui_image_only_thresh_to_set = FALLBACK_IMAGE_ONLY_THRESHOLD
+    ui_batch_size_to_set = MODEL_BATCH_SIZE_DEFAULTS.get(
+        selected_model_path, FALLBACK_BATCH_SIZE
+    )
     new_db_path = generate_db_path_for_model(selected_model_path)
     progress(0.1, desc=f"DB path: {new_db_path}")
     if not os.path.exists(new_db_path):
@@ -294,6 +310,7 @@ def load_and_switch_model_db(
             ui_combined_thresh_to_set,
             ui_image_only_thresh_to_set,
             gr.Dropdown(interactive=True),
+            ui_batch_size_to_set,
         )
     except Exception as e:
         print(f"Error loading model/DB: {e}")
@@ -314,6 +331,7 @@ def load_and_switch_model_db(
             FALLBACK_COMBINED_THRESHOLD,
             FALLBACK_IMAGE_ONLY_THRESHOLD,
             gr.Dropdown(interactive=True),
+            FALLBACK_BATCH_SIZE,
         )
 
 
@@ -1717,6 +1735,7 @@ if __name__ == "__main__":
             combined_cosine_thresh_slider,
             image_only_cosine_thresh_slider,
             model_dropdown,
+            batch_size_slider,
         ]
 
         def update_dropdown_from_indexed_folders(indexed_folders_text: str):
