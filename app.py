@@ -1462,9 +1462,9 @@ if __name__ == "__main__":
         theme=gr.themes.Default(primary_hue="purple"),
         js=js_credits,
         css_paths=str(css_path),
-        title="Local Lens",
+        title="LocalLens",
     ) as app:
-        gr.Markdown("# Local Lens")
+        gr.Markdown("# LocalLens")
 
         active_model_path_state = gr.State(DEFAULT_MODEL_PATH)
         active_db_path_state = gr.State(None)
