@@ -17,6 +17,8 @@ JPEG_DRAFT_MARGIN = 2
 # Share of free VRAM indexing batches may use; the rest absorbs fragmentation, text
 # embedding during searches, and other GPU apps.
 VRAM_BUDGET_FRACTION = 0.7
+# Evenly spaced frames sampled from each video or animated image.
+N_FRAMES = 8
 
 _LOADER_MAX_WORKERS = max(1, (os.cpu_count() or 8) // 2)
 _loader_executor: ThreadPoolExecutor | None = None
@@ -72,20 +74,44 @@ def _get_loader_executor() -> ThreadPoolExecutor:
     return _loader_executor
 
 
-def _extract_video_frame(path: str) -> Image.Image:
-    """Extracts the first frame from a video file."""
+def _sample_indices(frame_count: int) -> list[int]:
+    return sorted({int(i) for i in np.linspace(0, frame_count - 1, N_FRAMES)})
+
+
+def _read_video_frames(path: str, indices: list[int] | None) -> list[np.ndarray]:
+    """Reads the given frame indices, or just the first frame when indices is None."""
     cap = cv2.VideoCapture(path)
     if not cap.isOpened():
         raise IOError(f"Cannot open video: {path}")
+    try:
+        if indices is None:
+            ok, frame = cap.read()
+            return [frame] if ok and frame is not None else []
+        frames = []
+        for index in indices:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, index)
+            ok, frame = cap.read()
+            if ok and frame is not None:
+                frames.append(frame)
+        return frames
+    finally:
+        cap.release()
 
-    ret, frame = cap.read()
+
+def _extract_video_frames(path: str) -> list[Image.Image]:
+    """Samples up to N_FRAMES evenly spaced frames, skipping any that fail to decode."""
+    cap = cv2.VideoCapture(path)
+    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) if cap.isOpened() else 0
     cap.release()
-
-    if not ret or frame is None:
+    frames = []
+    if frame_count > 0:
+        frames = _read_video_frames(path, _sample_indices(frame_count))
+    if not frames:
+        # Frame count unknown (common for WebM) or every seek failed.
+        frames = _read_video_frames(path, None)
+    if not frames:
         raise IOError(f"Could not read frame from video: {path}")
-
-    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    return Image.fromarray(frame_rgb)
+    return [Image.fromarray(cv2.cvtColor(f, cv2.COLOR_BGR2RGB)) for f in frames]
 
 
 def _draft_size(processor) -> int | None:
@@ -95,26 +121,32 @@ def _draft_size(processor) -> int | None:
     return edge * JPEG_DRAFT_MARGIN if edge else None
 
 
+def decode_frames(path: str, draft_size: int | None = None) -> list[Image.Image]:
+    """RGB frames for a media file: one for still images, up to N_FRAMES otherwise."""
+    if os.path.splitext(path)[1].lower() in VIDEO_EXTENSIONS_UTILS:
+        return _extract_video_frames(path)
+    with Image.open(path) as src:
+        frame_count = getattr(src, "n_frames", 1)
+        if frame_count > 1:
+            frames = []
+            for index in _sample_indices(frame_count):
+                src.seek(index)
+                frames.append(src.convert("RGB"))
+            return frames
+        if draft_size:
+            # libjpeg DCT scaling (JPEG only): skips most decode work on large photos.
+            src.draft("RGB", (draft_size, draft_size))
+        return [ImageOps.exif_transpose(src).convert("RGB")]
+
+
 def _load_and_convert_image(
     path: str,
     draft_size: int | None = None,
-) -> tuple[Image.Image | None, str | None, str | None]:
-    """Helper function to load and convert a single image OR video frame."""
+) -> tuple[list[Image.Image], str | None, str | None]:
     try:
-        ext = os.path.splitext(path)[1].lower()
-
-        if ext in VIDEO_EXTENSIONS_UTILS:
-            img = _extract_video_frame(path)
-        else:
-            with Image.open(path) as src:
-                if draft_size:
-                    # libjpeg DCT scaling (JPEG only): skips most decode work on large photos.
-                    src.draft("RGB", (draft_size, draft_size))
-                img = ImageOps.exif_transpose(src).convert("RGB")
-
-        return img, path, None
+        return decode_frames(path, draft_size), path, None
     except (FileNotFoundError, UnidentifiedImageError, IOError, Exception) as e:
-        return None, None, f"Warning: Error processing {path}: {e}"
+        return [], None, f"Warning: Error processing {path}: {e}"
 
 
 def _empty_features(device: torch.device | str) -> np.ndarray:
@@ -127,7 +159,7 @@ def decode_images(
     image_paths_batch: list[str],
     draft_size: int | None = None,
 ) -> tuple[list[Image.Image], list[str]]:
-    """Load and convert a batch of media paths to RGB PIL images."""
+    """Decode a batch of media paths; returns all frames and each frame's source path."""
     valid_images_pil: list[Image.Image] = []
     valid_paths: list[str] = []
 
@@ -137,10 +169,10 @@ def decode_images(
         )
     )
 
-    for img_pil, successful_path, error_msg in results:
-        if img_pil and successful_path:
-            valid_images_pil.append(img_pil)
-            valid_paths.append(successful_path)
+    for frames, successful_path, error_msg in results:
+        if frames and successful_path:
+            valid_images_pil.extend(frames)
+            valid_paths.extend([successful_path] * len(frames))
         elif error_msg:
             print(error_msg)
 
@@ -160,8 +192,9 @@ def prepare_image_batch(
     """
     Decode media and run CPU-side preprocessing for one batch.
 
-    Returns (inputs_on_cpu, valid_paths). inputs is None when nothing decoded.
-    Device transfer is deferred so this stage can run while the GPU embeds.
+    Returns (inputs_on_cpu, frame_paths), one path per decoded frame; inputs is None
+    when nothing decoded. Device transfer is deferred so this stage can run while
+    the GPU embeds.
     """
     valid_images_pil, valid_paths = decode_images(
         image_paths_batch, _draft_size(processor)
@@ -177,22 +210,24 @@ def embed_prepared_batch(
     inputs,
     model,
     device: torch.device | str,
+    max_batch: int | None = None,
 ) -> np.ndarray:
-    """Move preprocessed inputs to device and run image embedding."""
-    inputs = inputs.to(device)
-
+    """Embed preprocessed inputs on device, at most max_batch images per forward pass."""
+    total = len(next(iter(inputs.values())))
+    step = max_batch or total
+    chunks = []
     with torch.no_grad():
-        image_features = model.get_image_features(
-            **inputs, return_dict=True
-        ).pooler_output
-        image_features = F.normalize(image_features, p=2, dim=-1)
-        features_np = image_features.float().cpu().numpy()
+        for start in range(0, total, step):
+            chunk = {k: v[start : start + step].to(device) for k, v in inputs.items()}
+            image_features = model.get_image_features(
+                **chunk, return_dict=True
+            ).pooler_output
+            image_features = F.normalize(image_features, p=2, dim=-1)
+            chunks.append(image_features.float().cpu().numpy())
 
-        device_type = device.type if hasattr(device, "type") else device
-        target_type = np.float16 if device_type != "cpu" else np.float32
-        features_np = features_np.astype(target_type)
-
-    return features_np
+    device_type = device.type if hasattr(device, "type") else device
+    target_type = np.float16 if device_type != "cpu" else np.float32
+    return np.concatenate(chunks).astype(target_type)
 
 
 def fit_batch_size(

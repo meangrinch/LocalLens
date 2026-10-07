@@ -4,7 +4,13 @@ from typing import List, Tuple
 import numpy as np
 import torch
 
-from index_store import IndexStore, build_media_record, canonical_path, path_key
+from index_store import (
+    IndexStore,
+    build_media_record,
+    canonical_path,
+    path_key,
+    write_media_embeddings,
+)
 from model_utils import extract_features
 
 IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"]
@@ -33,24 +39,33 @@ def list_image_files(directory_path: str, recursive: bool) -> List[str]:
 
 
 def fetch_embeddings_from_db(
-    collection, ids: List[str], batch_size: int = 1000
+    collection, media_ids: List[str], batch_size: int = 1000
 ) -> dict:
-    """Fetch embeddings for given IDs from ChromaDB in batches."""
-    id_to_embedding: dict = {}
-    for i in range(0, len(ids), batch_size):
-        batch_ids = ids[i : i + batch_size]
+    """Fetch each media's frame embeddings (rows ordered by frame) from ChromaDB."""
+    frames: dict = {}
+    for i in range(0, len(media_ids), batch_size):
+        batch_ids = media_ids[i : i + batch_size]
         try:
-            res = collection.get(ids=batch_ids, include=["embeddings"])
+            res = collection.get(
+                where={"media_id": {"$in": batch_ids}},
+                include=["embeddings", "metadatas"],
+            )
         except Exception as e:
             print(f"Warning: DB get failed for batch starting at {i}: {e}")
             continue
-        if not res or not res.get("ids"):
+        embeddings = res.get("embeddings")
+        if embeddings is None:
             continue
-        for got_id, emb in zip(res["ids"], res.get("embeddings", [])):
-            if emb is None:
+        for meta, emb in zip(res.get("metadatas") or [], embeddings):
+            if emb is None or not meta:
                 continue
-            id_to_embedding[got_id] = np.asarray(emb, dtype=np.float32)
-    return id_to_embedding
+            frames.setdefault(meta["media_id"], []).append(
+                (meta.get("frame", 0), np.asarray(emb, dtype=np.float32))
+            )
+    return {
+        media_id: np.stack([emb for _, emb in sorted(rows, key=lambda r: r[0])])
+        for media_id, rows in frames.items()
+    }
 
 
 def compute_embeddings(
@@ -60,7 +75,7 @@ def compute_embeddings(
     device: torch.device | str,
     batch_size: int,
 ) -> Tuple[np.ndarray, List[str]]:
-    """Compute normalized embeddings for images in batches."""
+    """Compute normalized embeddings in batches; returns one row and path per frame."""
     if not image_paths:
         return np.empty((0, 0), dtype=np.float32), []
 
@@ -205,8 +220,6 @@ def find_duplicates_in_folders(
     if len(records) < 2:
         return []
 
-    record_by_path = {record.path: record for record in records}
-
     # Try to fetch embeddings from DB
     embeddings_list: List[np.ndarray] = []
     paths_list: List[str] = []
@@ -222,7 +235,7 @@ def find_duplicates_in_folders(
         # Append in directory order for deterministic output
         for record in records:
             if record.media_id in present_map:
-                embeddings_list.append(present_map[record.media_id])
+                embeddings_list.append(present_map[record.media_id][0])
                 paths_list.append(record.path)
 
     # Compute missing embeddings
@@ -235,20 +248,17 @@ def find_duplicates_in_folders(
             batch_size=batch_size,
         )
         if miss_embeddings.size > 0 and len(miss_processed) > 0:
-            miss_records = [record_by_path[path] for path in miss_processed]
-            if collection is not None:
-                try:
-                    collection.upsert(
-                        embeddings=miss_embeddings,
-                        documents=[record.path for record in miss_records],
-                        ids=[record.media_id for record in miss_records],
-                        metadatas=[record.to_metadata() for record in miss_records],
-                    )
-                except Exception as e:
-                    print(f"Warning: failed to upsert embeddings: {e}")
-            store.upsert_media_records(miss_records)
-            # Append to working arrays following the directory order
-            miss_map = {p: e for p, e in zip(miss_processed, miss_embeddings)}
+            try:
+                miss_records = write_media_embeddings(
+                    collection, missing_records, miss_embeddings, miss_processed
+                )
+                store.upsert_media_records(miss_records)
+            except Exception as e:
+                print(f"Warning: failed to upsert embeddings: {e}")
+            # Append to working arrays following the directory order; first frame per file.
+            miss_map = {}
+            for p, e in zip(miss_processed, miss_embeddings):
+                miss_map.setdefault(p, e)
             for record in records:
                 if record.path in miss_map:
                     embeddings_list.append(miss_map[record.path])

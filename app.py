@@ -979,6 +979,12 @@ def handle_find_duplicates(
         return empty_duplicate_results()
 
 
+def unique_by_path(items: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Keeps the first (best-scoring) gallery item per file; videos match per frame."""
+    seen = set()
+    return [item for item in items if not (item[0] in seen or seen.add(item[0]))]
+
+
 def caption_with_score(caption: str, score: float, show: bool) -> str:
     """Appends the score a search mode thresholds on, so captions match the sliders."""
     return f"{caption} · {score:.3f}" if show else caption
@@ -1292,12 +1298,14 @@ def search(
         candidate_data = {}
         if text_query_results["documents"] and text_query_results["documents"][0]:
             text_metadatas = (text_query_results.get("metadatas") or [[]])[0] or []
+            text_ids = text_query_results["ids"][0]
             for i, doc_path in enumerate(text_query_results["documents"][0]):
                 metadata = text_metadatas[i] if i < len(text_metadatas) else None
                 result_path, caption = path_and_caption_from_result(doc_path, metadata)
-                media_id = (metadata or {}).get("media_id") or result_path
-                if media_id not in candidate_data:
-                    candidate_data[media_id] = {
+                # Keyed per Chroma record so every frame of a video gets scored.
+                record_id = text_ids[i]
+                if record_id not in candidate_data:
+                    candidate_data[record_id] = {
                         "path": result_path,
                         "caption": caption,
                         "db_embedding": torch.tensor(
@@ -1307,12 +1315,13 @@ def search(
 
         if image_query_results["documents"] and image_query_results["documents"][0]:
             image_metadatas = (image_query_results.get("metadatas") or [[]])[0] or []
+            image_ids = image_query_results["ids"][0]
             for i, doc_path in enumerate(image_query_results["documents"][0]):
                 metadata = image_metadatas[i] if i < len(image_metadatas) else None
                 result_path, caption = path_and_caption_from_result(doc_path, metadata)
-                media_id = (metadata or {}).get("media_id") or result_path
-                if media_id not in candidate_data:
-                    candidate_data[media_id] = {
+                record_id = image_ids[i]
+                if record_id not in candidate_data:
+                    candidate_data[record_id] = {
                         "path": result_path,
                         "caption": caption,
                         "db_embedding": torch.tensor(
@@ -1389,7 +1398,9 @@ def search(
                     f"✗ {doc_path} (comb: {combined_score:.4f}, txt: {text_sim:.4f}, img: {image_sim:.4f})"
                 )
 
-    gallery_images = filter_gallery_by_active_folder(gallery_images, active_folder)
+    gallery_images = filter_gallery_by_active_folder(
+        unique_by_path(gallery_images), active_folder
+    )
 
     result_count = len(gallery_images)
     if result_count == 0:

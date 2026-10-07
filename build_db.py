@@ -12,9 +12,10 @@ from index_store import (
     batched,
     build_media_records,
     canonical_path,
+    delete_media_embeddings,
     migrate_legacy_db,
-    path_key,
     write_indexed_folders_mirror,
+    write_media_embeddings,
 )
 from model_utils import (
     embed_prepared_batch,
@@ -38,11 +39,10 @@ def _emit_progress(progress_callback, status: str, **kwargs) -> None:
 
 
 def _delete_chroma_ids(collection, media_ids: list[str]) -> None:
-    for batch in batched(media_ids, 500):
-        try:
-            collection.delete(ids=batch)
-        except Exception as e:
-            print(f"Error deleting batch: {e}")
+    try:
+        delete_media_embeddings(collection, media_ids)
+    except Exception as e:
+        print(f"Error deleting batch: {e}")
 
 
 def _store_processed_records(store: IndexStore, records) -> None:
@@ -63,7 +63,6 @@ def _upsert_records_with_store(
         return 0
 
     store = IndexStore(db_path_str)
-    record_by_key = {record.path_key: record for record in records}
     processed_count = 0
     batch_groups = list(batched(records, batch_size_param))
     total_batches = len(batch_groups)
@@ -101,17 +100,12 @@ def _upsert_records_with_store(
                 continue
 
             try:
-                batch_embeddings = embed_prepared_batch(inputs, model_param, device)
-                batch_processed_records = [
-                    record_by_key[path_key(path)] for path in processed_files
-                ]
-                collection.upsert(
-                    embeddings=batch_embeddings,
-                    documents=[record.path for record in batch_processed_records],
-                    ids=[record.media_id for record in batch_processed_records],
-                    metadatas=[
-                        record.to_metadata() for record in batch_processed_records
-                    ],
+                # processed_files has one entry per frame, so videos expand the batch.
+                batch_embeddings = embed_prepared_batch(
+                    inputs, model_param, device, max_batch=batch_size_param
+                )
+                batch_processed_records = write_media_embeddings(
+                    collection, batch_records, batch_embeddings, processed_files
                 )
                 _store_processed_records(store, batch_processed_records)
             except Exception as e:
@@ -154,6 +148,9 @@ def process_images(
 
     migrate_legacy_db(db_path_str, collection)
     store = IndexStore(db_path_str)
+    invalidated = store.invalidate_animated_media()
+    if invalidated:
+        print(f"Re-embedding {invalidated} videos/animated images as multiple frames.")
 
     if mode == "add":
         print(f"Adding folders: {', '.join(folders)}")

@@ -11,15 +11,20 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Iterable
 
+import numpy as np
 import send2trash
 from PIL import Image
 
 INDEX_SCHEMA_VERSION = "1"
 INDEX_DB_FILENAME = "index.sqlite"
+# schema_meta key set once animated media embedded as a single frame were invalidated.
+FRAME_SAMPLING_KEY = "frame_sampling"
 
 IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"]
 VIDEO_EXTENSIONS = [".mp4", ".mov", ".avi", ".mkv", ".webm"]
 ALL_EXTENSIONS = IMAGE_EXTENSIONS + VIDEO_EXTENSIONS
+# Sampled frames at least this similar to an already kept frame are not stored.
+FRAME_DISTINCT_THRESHOLD = 0.95
 
 
 @dataclass(frozen=True)
@@ -144,9 +149,67 @@ def build_media_records(folder_path: str) -> list[MediaRecord]:
     ]
 
 
+def distinct_frame_indices(
+    embeddings: np.ndarray, threshold: float = FRAME_DISTINCT_THRESHOLD
+) -> list[int]:
+    """Indices of frames, in order, that differ from every earlier kept frame."""
+    kept: list[int] = []
+    for index, embedding in enumerate(embeddings):
+        if all(float(embedding @ embeddings[k]) < threshold for k in kept):
+            kept.append(index)
+    return kept
+
+
 def batched(items: list, batch_size: int) -> Iterable[list]:
     for start in range(0, len(items), batch_size):
         yield items[start : start + batch_size]
+
+
+def delete_media_embeddings(collection, media_ids: list[str]) -> None:
+    """Deletes every Chroma record (all frames) belonging to the given media."""
+    for batch in batched(list(media_ids), 500):
+        collection.delete(where={"media_id": {"$in": batch}})
+
+
+def write_media_embeddings(
+    collection,
+    records: list[MediaRecord],
+    embeddings: np.ndarray,
+    frame_paths: list[str],
+) -> list[MediaRecord]:
+    """Replaces each media file's Chroma records with its distinct frames.
+
+    `frame_paths` names the source file of each embedding row. A file with one
+    kept frame is stored under its media_id; several frames get `media_id:k`.
+    Returns the records that had at least one embedding.
+    """
+    rows_by_key: dict[str, list[int]] = {}
+    for row, path in enumerate(frame_paths):
+        rows_by_key.setdefault(path_key(path), []).append(row)
+    written = [record for record in records if record.path_key in rows_by_key]
+    if not written:
+        return []
+
+    delete_media_embeddings(collection, [record.media_id for record in written])
+    ids, kept_rows, documents, metadatas = [], [], [], []
+    for record in written:
+        rows = rows_by_key[record.path_key]
+        frame_embeddings = embeddings[rows].astype(np.float32)
+        kept = [rows[i] for i in distinct_frame_indices(frame_embeddings)]
+        for frame, row in enumerate(kept):
+            ids.append(
+                record.media_id if len(kept) == 1 else f"{record.media_id}:{frame}"
+            )
+            kept_rows.append(row)
+            documents.append(record.path)
+            metadatas.append({**record.to_metadata(), "frame": frame})
+    collection.add(
+        ids=ids,
+        embeddings=embeddings[kept_rows],
+        documents=documents,
+        metadatas=metadatas,
+    )
+    return written
 
 
 class IndexStore:
@@ -370,6 +433,32 @@ class IndexStore:
             if old is None or old.mtime != record.mtime or old.size != record.size:
                 needing.append(record)
         return needing
+
+    def invalidate_animated_media(self) -> int:
+        """One-time: marks videos/GIFs/WebPs embedded as a single frame for re-embedding.
+
+        Returns how many media were marked; 0 once it has run for this index.
+        """
+        animated = set(VIDEO_EXTENSIONS) | {".gif", ".webp"}
+        with self.connect() as conn:
+            done = conn.execute(
+                "SELECT 1 FROM schema_meta WHERE key = ?", (FRAME_SAMPLING_KEY,)
+            ).fetchone()
+            if done:
+                return 0
+            rows = conn.execute("SELECT media_id, path FROM media").fetchall()
+            stale = [
+                (row["media_id"],)
+                for row in rows
+                if os.path.splitext(row["path"])[1].lower() in animated
+            ]
+            # records_needing_embedding re-embeds any record whose mtime differs.
+            conn.executemany("UPDATE media SET mtime = -1 WHERE media_id = ?", stale)
+            conn.execute(
+                "INSERT INTO schema_meta(key, value) VALUES (?, '1')",
+                (FRAME_SAMPLING_KEY,),
+            )
+        return len(stale)
 
     def delete_media_ids(self, media_ids: list[str]) -> None:
         if not media_ids:
@@ -750,7 +839,7 @@ def trash_and_delete_indexed_media(
 
     if collection is not None:
         try:
-            collection.delete(ids=[mid])
+            delete_media_embeddings(collection, [mid])
         except Exception as e:
             print(f"Error removing media {mid} from ChromaDB: {e}")
 

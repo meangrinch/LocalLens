@@ -106,7 +106,7 @@ def test_trash_and_delete_indexed_media(tmp, db_dir, store):
 
     assert not os.path.exists(canonical_path(img_path))
     assert mid not in store.get_media_by_ids([mid])
-    collection.delete.assert_called_once_with(ids=[mid])
+    collection.delete.assert_called_once_with(where={"media_id": {"$in": [mid]}})
 
 
 def test_trash_and_delete_nonexistent_prunes_db(tmp, db_dir, store):
@@ -117,7 +117,7 @@ def test_trash_and_delete_nonexistent_prunes_db(tmp, db_dir, store):
     collection = MagicMock()
     assert trash_and_delete_indexed_media(fake_path, db_dir, collection)
     assert mid not in store.get_media_by_ids([mid])
-    collection.delete.assert_called_once_with(ids=[mid])
+    collection.delete.assert_called_once_with(where={"media_id": {"$in": [mid]}})
 
 
 def test_trash_locked_file_failure(tmp, db_dir, store, monkeypatch):

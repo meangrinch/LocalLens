@@ -30,7 +30,7 @@ def test_update_reports_progress_and_counts(tmp_path, monkeypatch):
         build_db, "prepare_image_batch", lambda paths, _: (paths, paths)
     )
     monkeypatch.setattr(
-        build_db, "embed_prepared_batch", lambda paths, *_: np.zeros((len(paths), 4))
+        build_db, "embed_prepared_batch", lambda paths, *_, **__: np.eye(len(paths), 4)
     )
     collection = MagicMock()
     events = []
@@ -46,8 +46,8 @@ def test_update_reports_progress_and_counts(tmp_path, monkeypatch):
     )
 
     assert (added, removed) == (1, 1)
-    collection.upsert.assert_called_once()
-    assert collection.upsert.call_args.kwargs["ids"] == [media_id_for_path(new)]
+    collection.add.assert_called_once()
+    assert collection.add.call_args.kwargs["ids"] == [media_id_for_path(new)]
     assert (
         "start_processing",
         {
