@@ -1,5 +1,6 @@
 import os
 from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 
 import cv2
 import numpy as np
@@ -10,6 +11,9 @@ from transformers import AutoModel, AutoProcessor
 
 VIDEO_EXTENSIONS_UTILS = [".mp4", ".mov", ".avi", ".mkv", ".webm"]
 TRUST_REMOTE_MODEL_CODE = True
+# Decode JPEGs to at least this multiple of the model input size. Measured drift vs a
+# full decode: worst-case cosine ~0.998, while 1x drifted to ~0.984 on SigLIP2 so400m.
+JPEG_DRAFT_MARGIN = 2
 
 _LOADER_MAX_WORKERS = max(1, (os.cpu_count() or 8) // 2)
 _loader_executor: ThreadPoolExecutor | None = None
@@ -81,8 +85,16 @@ def _extract_video_frame(path: str) -> Image.Image:
     return Image.fromarray(frame_rgb)
 
 
+def _draft_size(processor) -> int | None:
+    """Minimum decode size for JPEG drafting, or None if the input size is unknown."""
+    size = getattr(processor.image_processor, "size", None) or {}
+    edge = size.get("shortest_edge") or max(size.get("height", 0), size.get("width", 0))
+    return edge * JPEG_DRAFT_MARGIN if edge else None
+
+
 def _load_and_convert_image(
     path: str,
+    draft_size: int | None = None,
 ) -> tuple[Image.Image | None, str | None, str | None]:
     """Helper function to load and convert a single image OR video frame."""
     try:
@@ -92,6 +104,9 @@ def _load_and_convert_image(
             img = _extract_video_frame(path)
         else:
             with Image.open(path) as src:
+                if draft_size:
+                    # libjpeg DCT scaling (JPEG only): skips most decode work on large photos.
+                    src.draft("RGB", (draft_size, draft_size))
                 img = ImageOps.exif_transpose(src).convert("RGB")
 
         return img, path, None
@@ -107,13 +122,16 @@ def _empty_features(device: torch.device | str) -> np.ndarray:
 
 def decode_images(
     image_paths_batch: list[str],
+    draft_size: int | None = None,
 ) -> tuple[list[Image.Image], list[str]]:
     """Load and convert a batch of media paths to RGB PIL images."""
     valid_images_pil: list[Image.Image] = []
     valid_paths: list[str] = []
 
     results = list(
-        _get_loader_executor().map(_load_and_convert_image, image_paths_batch)
+        _get_loader_executor().map(
+            partial(_load_and_convert_image, draft_size=draft_size), image_paths_batch
+        )
     )
 
     for img_pil, successful_path, error_msg in results:
@@ -142,7 +160,9 @@ def prepare_image_batch(
     Returns (inputs_on_cpu, valid_paths). inputs is None when nothing decoded.
     Device transfer is deferred so this stage can run while the GPU embeds.
     """
-    valid_images_pil, valid_paths = decode_images(image_paths_batch)
+    valid_images_pil, valid_paths = decode_images(
+        image_paths_batch, _draft_size(processor)
+    )
     if not valid_images_pil:
         return None, []
 
