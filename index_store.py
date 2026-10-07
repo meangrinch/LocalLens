@@ -1,6 +1,5 @@
 import hashlib
 import os
-import random
 import sqlite3
 import time
 from contextlib import contextmanager
@@ -384,24 +383,11 @@ class IndexStore:
             where_clause = "WHERE folder_id = ?"
             params.append(folder_id_for_path(folder_path))
         with self.connect() as conn:
-            count_row = conn.execute(
-                f"SELECT COUNT(*) AS total FROM media {where_clause}", params
-            ).fetchone()
-            total = count_row["total"] if count_row else 0
-            if total == 0:
-                return []
-            limit = min(limit, total)
-            offsets = sorted(random.sample(range(total), limit))
-            records = []
-            for offset in offsets:
-                row = conn.execute(
-                    f"SELECT * FROM media {where_clause} ORDER BY path LIMIT 1 OFFSET ?",
-                    params + [offset],
-                ).fetchone()
-                if row:
-                    records.append(record_from_row(row))
-            random.shuffle(records)
-            return records
+            rows = conn.execute(
+                f"SELECT * FROM media {where_clause} ORDER BY RANDOM() LIMIT ?",
+                params + [limit],
+            ).fetchall()
+            return [record_from_row(row) for row in rows]
 
 
 def record_from_row(row: sqlite3.Row) -> MediaRecord:
