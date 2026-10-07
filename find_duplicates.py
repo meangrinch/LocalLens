@@ -98,6 +98,7 @@ def find_similar_pairs(
     paths: List[str],
     threshold: float,
     block_size: int = 1024,
+    device: torch.device | str = "cpu",
 ) -> List[Tuple[float, str, str]]:
     """Find pairs of images with cosine similarity >= threshold.
 
@@ -109,28 +110,20 @@ def find_similar_pairs(
 
     results: List[Tuple[float, str, str]] = []
 
-    # Use float32 for stable dot products
-    E = embeddings.astype(np.float32, copy=False)
+    # float32 (not half) because half precision is too coarse near thresholds like 0.97
+    E = torch.from_numpy(np.ascontiguousarray(embeddings, dtype=np.float32)).to(device)
 
-    # Process by row blocks against the full matrix
     for row_start in range(0, num_images, block_size):
         row_end = min(row_start + block_size, num_images)
-        block = E[row_start:row_end]
 
-        # Since vectors are normalized, cosine similarity = dot product
-        sim_block = np.matmul(block, E.T)
+        # Only compare against rows at or after this block: the lower triangle is redundant.
+        sim_block = E[row_start:row_end] @ E[row_start:].T
+        upper = torch.ones_like(sim_block, dtype=torch.bool).triu_(diagonal=1)
+        rows, cols = torch.nonzero((sim_block >= threshold) & upper, as_tuple=True)
+        sims = sim_block[rows, cols].tolist()
 
-        # Iterate within the block and only take upper triangle (j > i)
-        for local_row, global_i in enumerate(range(row_start, row_end)):
-            row_sims = sim_block[local_row]
-            j_start = global_i + 1
-            if j_start >= num_images:
-                continue
-            sims = row_sims[j_start:]
-            passing = np.where(sims >= threshold)[0]
-            for offset in passing.tolist():
-                j = j_start + offset
-                results.append((float(sims[offset]), paths[global_i], paths[j]))
+        for i, j, sim in zip(rows.tolist(), cols.tolist(), sims):
+            results.append((sim, paths[row_start + i], paths[row_start + j]))
 
     results.sort(key=lambda t: t[0], reverse=True)
     return results
@@ -276,6 +269,7 @@ def find_duplicates_in_folders(
         processed_paths,
         threshold=threshold,
         block_size=block_size,
+        device=device,
     )
 
     return pairs
