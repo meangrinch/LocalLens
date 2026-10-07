@@ -56,7 +56,7 @@ from index_store import (
 )
 from model_utils import load_model_and_processor, probe_batch_size
 
-__version__ = "1.6.2"
+__version__ = "1.7.0"
 
 # --- Configuration ---
 AVAILABLE_MODELS = [
