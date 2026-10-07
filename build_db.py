@@ -201,8 +201,8 @@ def process_images(
 
     elif mode == "update":
         print("Updating database...")
-        total_added = 0
         total_deleted = 0
+        records_by_id = {}
         for folder_arg in folders:
             folder_path = canonical_path(folder_arg)
             store.upsert_folder(folder_path)
@@ -221,23 +221,39 @@ def process_images(
                 store.delete_media_ids(stale_ids)
                 total_deleted += len(stale_ids)
 
-            records_to_embed = store.records_needing_embedding(filesystem_records)
-            if records_to_embed:
-                print(f"Adding {len(records_to_embed)} images...")
-                total_added += _upsert_records_with_store(
-                    db_path_str,
-                    records_to_embed,
-                    collection,
-                    model_param,
-                    processor_param,
-                    device,
-                    batch_size_param,
-                )
+            # Nested indexed folders yield the same file twice; the outer folder wins.
+            for record in store.records_needing_embedding(filesystem_records):
+                records_by_id.setdefault(record.media_id, record)
+
+        records_to_embed = list(records_by_id.values())
+        _emit_progress(
+            progress_callback,
+            "start_processing",
+            folders_being_processed=folders,
+            total_images_to_process=len(records_to_embed),
+        )
+        total_added = 0
+        if records_to_embed:
+            print(f"Adding {len(records_to_embed)} images...")
+            total_added = _upsert_records_with_store(
+                db_path_str,
+                records_to_embed,
+                collection,
+                model_param,
+                processor_param,
+                device,
+                batch_size_param,
+                progress_callback,
+            )
+        _emit_progress(
+            progress_callback, "all_batches_done", total_successfully_added=total_added
+        )
 
         if total_added == 0 and total_deleted == 0:
             print("Database is up to date")
         else:
             print(f"Update complete: {total_added} added, {total_deleted} deleted")
+        return total_added, total_deleted
 
 
 def db_add_folders(
@@ -291,19 +307,23 @@ def db_update_indexed_folders(
     processor_obj,
     device: torch.device,
     batch_size: int,
-):
+    progress_callback=None,
+) -> tuple[int, int]:
+    """Rescan indexed folders; returns (added_or_updated, removed) counts."""
     start_time = time.time()
     migrate_legacy_db(db_path_str, collection_obj)
     store = IndexStore(db_path_str)
     indexed_folders = store.list_folders()
+    added, removed = 0, 0
     if indexed_folders:
-        process_images(
+        added, removed = process_images(
             indexed_folders,
             collection_obj,
             mode="update",
             model_param=model_obj,
             processor_param=processor_obj,
             device=device,
+            progress_callback=progress_callback,
             batch_size_param=batch_size,
             db_path_str=db_path_str,
         )
@@ -312,6 +332,7 @@ def db_update_indexed_folders(
         print("Index empty - nothing to update")
     end_time = time.time()
     print(f"Update completed in {(end_time - start_time):.2f}s")
+    return added, removed
 
 
 def db_delete_folder(

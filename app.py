@@ -335,81 +335,10 @@ def load_and_switch_model_db(
         )
 
 
-def handle_update_sync_button_click(
-    current_model_path: str,
-    current_db_path: str,
-    active_model_state_val,
-    active_processor_state_val,
-    active_model_type_state_val,
-    active_chroma_client_state_val,
-    batch_size_ui: int,
-    progress=gr.Progress(track_tqdm=True),
-):
-    """Calls db_update_indexed_folders directly to update/sync the active database."""
-    if not current_model_path or not current_db_path:
-        gr.Warning("No active model or DB path. Please select a model first.")
-        return
-    if (
-        not active_model_state_val
-        or not active_processor_state_val
-        or not active_model_type_state_val
-        or not active_chroma_client_state_val
-    ):
-        gr.Warning(
-            "Model components (model, processor, type, or DB client) not loaded. Please re-select a model."
-        )
-        return
+def make_index_progress_callback(progress):
+    """Maps build_db progress events onto a Gradio progress bar."""
 
-    progress(0, desc="Starting DB update...")
-
-    try:
-        db_update_indexed_folders(
-            db_path_str=current_db_path,
-            collection_obj=active_chroma_client_state_val.get_collection("images"),
-            model_obj=active_model_state_val,
-            processor_obj=active_processor_state_val,
-            device=device,
-            batch_size=batch_size_ui,
-        )
-        gr.Info(f"Database '{current_db_path}' update process completed successfully.")
-        progress(1, desc="DB updated.")
-
-    except Exception as e:
-        print(f"Error updating DB directly: {e}")
-        gr.Error(
-            f"An unexpected error occurred while trying to update DB '{current_db_path}': {e}"
-        )
-        progress(1, desc="Error.")
-
-
-def handle_add_folder_button_click(
-    new_folder_to_add: str,
-    current_model_path: str,
-    current_db_path: str,
-    active_model_state_val,
-    active_processor_state_val,
-    active_model_type_state_val,
-    active_chroma_client_state_val,
-    batch_size_ui: int,
-    progress=gr.Progress(),
-):
-    """Calls db_add_folders directly to add a new folder to the active DB."""
-    new_folder_stripped = new_folder_to_add.strip() if new_folder_to_add else ""
-
-    if not new_folder_stripped:
-        gr.Warning("Folder path cannot be empty.")
-        return "\n".join(read_indexed_folders(current_db_path))
-
-    if not current_model_path or not current_db_path:
-        gr.Warning("No active model or DB path. Please select a model first.")
-        return "\n".join(read_indexed_folders(current_db_path))
-
-    if not os.path.isdir(new_folder_stripped):
-        print(f"Folder not found on disk: {os.path.abspath(new_folder_stripped)}")
-        gr.Warning(f"Folder not found: {new_folder_stripped}")
-        return "\n".join(read_indexed_folders(current_db_path))
-
-    def update_gradio_progress(status, **kwargs):
+    def callback(status, **kwargs):
         if status == "start_processing":
             total_images = kwargs.get("total_images_to_process", 0)
             folders_being_processed = kwargs.get("folders_being_processed", [])
@@ -451,12 +380,99 @@ def handle_add_folder_button_click(
         elif status == "all_batches_done":
             total_added = kwargs.get("total_successfully_added", 0)
             progress(1, desc=f"Successfully processed {total_added} images.")
-        elif status == "add_folder_completed":
+
+    return callback
+
+
+def handle_update_sync_button_click(
+    current_model_path: str,
+    current_db_path: str,
+    active_model_state_val,
+    active_processor_state_val,
+    active_model_type_state_val,
+    active_chroma_client_state_val,
+    batch_size_ui: int,
+    progress=gr.Progress(track_tqdm=True),
+):
+    """Calls db_update_indexed_folders directly to update/sync the active database."""
+    if not current_model_path or not current_db_path:
+        gr.Warning("No active model or DB path. Please select a model first.")
+        return
+    if (
+        not active_model_state_val
+        or not active_processor_state_val
+        or not active_model_type_state_val
+        or not active_chroma_client_state_val
+    ):
+        gr.Warning(
+            "Model components (model, processor, type, or DB client) not loaded. Please re-select a model."
+        )
+        return
+
+    progress(0, desc="Starting DB update...")
+
+    try:
+        added, removed = db_update_indexed_folders(
+            db_path_str=current_db_path,
+            collection_obj=active_chroma_client_state_val.get_collection("images"),
+            model_obj=active_model_state_val,
+            processor_obj=active_processor_state_val,
+            device=device,
+            batch_size=batch_size_ui,
+            progress_callback=make_index_progress_callback(progress),
+        )
+        if added or removed:
+            gr.Info(f"Sync complete: {added} added or updated, {removed} removed.")
+        else:
+            gr.Info("Sync complete: database is already up to date.")
+        progress(1, desc="DB updated.")
+
+    except Exception as e:
+        print(f"Error updating DB directly: {e}")
+        gr.Error(
+            f"An unexpected error occurred while trying to update DB '{current_db_path}': {e}"
+        )
+        progress(1, desc="Error.")
+
+
+def handle_add_folder_button_click(
+    new_folder_to_add: str,
+    current_model_path: str,
+    current_db_path: str,
+    active_model_state_val,
+    active_processor_state_val,
+    active_model_type_state_val,
+    active_chroma_client_state_val,
+    batch_size_ui: int,
+    progress=gr.Progress(),
+):
+    """Calls db_add_folders directly to add a new folder to the active DB."""
+    new_folder_stripped = new_folder_to_add.strip() if new_folder_to_add else ""
+
+    if not new_folder_stripped:
+        gr.Warning("Folder path cannot be empty.")
+        return "\n".join(read_indexed_folders(current_db_path))
+
+    if not current_model_path or not current_db_path:
+        gr.Warning("No active model or DB path. Please select a model first.")
+        return "\n".join(read_indexed_folders(current_db_path))
+
+    if not os.path.isdir(new_folder_stripped):
+        print(f"Folder not found on disk: {os.path.abspath(new_folder_stripped)}")
+        gr.Warning(f"Folder not found: {new_folder_stripped}")
+        return "\n".join(read_indexed_folders(current_db_path))
+
+    index_progress = make_index_progress_callback(progress)
+
+    def update_gradio_progress(status, **kwargs):
+        if status == "add_folder_completed":
             duration = kwargs.get("duration_seconds", 0)
             gr.Info(
                 f"Folder '{os.path.basename(new_folder_stripped)}' processed in {duration:.2f}s."
             )
             progress(1, desc=f"Add folder completed in {duration:.2f}s.")
+        else:
+            index_progress(status, **kwargs)
 
     try:
         db_add_folders(
