@@ -9,33 +9,10 @@ from index_store import (
     build_media_record,
     canonical_path,
     path_key,
+    scan_media_paths,
     write_media_embeddings,
 )
 from model_utils import extract_features
-
-IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"]
-
-
-def list_image_files(directory_path: str, recursive: bool) -> List[str]:
-    """Collect image file paths from a directory."""
-    image_paths: List[str] = []
-    if recursive:
-        for root, _, files in os.walk(directory_path):
-            for file_name in files:
-                if any(file_name.lower().endswith(ext) for ext in IMAGE_EXTENSIONS):
-                    image_paths.append(os.path.abspath(os.path.join(root, file_name)))
-    else:
-        try:
-            for file_name in os.listdir(directory_path):
-                file_path = os.path.join(directory_path, file_name)
-                if os.path.isfile(file_path) and any(
-                    file_name.lower().endswith(ext) for ext in IMAGE_EXTENSIONS
-                ):
-                    image_paths.append(os.path.abspath(file_path))
-        except FileNotFoundError:
-            return []
-    image_paths.sort()
-    return image_paths
 
 
 def fetch_embeddings_from_db(
@@ -110,35 +87,60 @@ def compute_embeddings(
 
 def find_similar_pairs(
     embeddings: np.ndarray,
-    paths: List[str],
+    owners: List[str],
     threshold: float,
     block_size: int = 1024,
     device: torch.device | str = "cpu",
 ) -> List[Tuple[float, str, str]]:
-    """Find pairs of images with cosine similarity >= threshold.
+    """Find file pairs whose frames match with a containment score >= threshold.
 
-    Assumes embeddings are already L2-normalized. Works in blocks to reduce memory.
+    `embeddings` holds one L2-normalized row per frame and `owners` the file of each
+    row. score = max(contain(A, B), contain(B, A)), where contain(A, B) is the mean
+    over A's frames of their best cosine against B's frames: trimmed clips and frame
+    grabs score high, a single shared frame does not, and two still images score
+    their plain cosine. A mean of maxima never exceeds the best frame pair, so
+    frame-level hits are a lossless candidate filter.
     """
-    num_images = embeddings.shape[0]
-    if num_images < 2:
+    files = list(dict.fromkeys(owners))
+    if len(files) < 2:
         return []
-
-    results: List[Tuple[float, str, str]] = []
+    file_index = {path: i for i, path in enumerate(files)}
+    row_files = [file_index[owner] for owner in owners]
+    rows_of: dict = {}
+    for row, file_id in enumerate(row_files):
+        rows_of.setdefault(file_id, []).append(row)
 
     # float32 (not half) because half precision is too coarse near thresholds like 0.97
     E = torch.from_numpy(np.ascontiguousarray(embeddings, dtype=np.float32)).to(device)
-
-    for row_start in range(0, num_images, block_size):
-        row_end = min(row_start + block_size, num_images)
+    row_file = torch.tensor(row_files, device=device)
+    num_frames = E.shape[0]
+    candidates = set()
+    for row_start in range(0, num_frames, block_size):
+        row_end = min(row_start + block_size, num_frames)
 
         # Only compare against rows at or after this block: the lower triangle is redundant.
         sim_block = E[row_start:row_end] @ E[row_start:].T
         upper = torch.ones_like(sim_block, dtype=torch.bool).triu_(diagonal=1)
         rows, cols = torch.nonzero((sim_block >= threshold) & upper, as_tuple=True)
-        sims = sim_block[rows, cols].tolist()
+        file_a, file_b = row_file[row_start + rows], row_file[row_start + cols]
+        cross = file_a != file_b
+        pairs = torch.stack(
+            [torch.minimum(file_a, file_b), torch.maximum(file_a, file_b)], dim=1
+        )[cross]
+        candidates.update(map(tuple, pairs.unique(dim=0).tolist()))
 
-        for i, j, sim in zip(rows.tolist(), cols.tolist(), sims):
-            results.append((sim, paths[row_start + i], paths[row_start + j]))
+    # Rescore on CPU: these matrices are at most N_FRAMES square, and a GPU sync per
+    # pair is ~100x slower when many files share a frame (fades, title cards).
+    # ponytail: still quadratic in files sharing a frame; score candidates in padded
+    # batches if libraries with thousands of such videos get slow.
+    frames_np = E.cpu().numpy()
+    frames_of = {f: frames_np[rows] for f, rows in rows_of.items()}
+    results: List[Tuple[float, str, str]] = []
+    for a, b in candidates:
+        sims = frames_of[a] @ frames_of[b].T
+        score = float(max(sims.max(axis=1).mean(), sims.max(axis=0).mean()))
+        if score >= threshold:
+            results.append((score, files[a], files[b]))
 
     results.sort(key=lambda t: t[0], reverse=True)
     return results
@@ -149,7 +151,6 @@ def find_duplicates_in_folder(
     threshold: float,
     batch_size: int,
     block_size: int,
-    recursive: bool,
     active_model,
     active_processor,
     active_chroma_client,
@@ -162,7 +163,6 @@ def find_duplicates_in_folder(
         threshold=threshold,
         batch_size=batch_size,
         block_size=block_size,
-        recursive=recursive,
         active_model=active_model,
         active_processor=active_processor,
         active_chroma_client=active_chroma_client,
@@ -176,7 +176,6 @@ def find_duplicates_in_folders(
     threshold: float,
     batch_size: int,
     block_size: int,
-    recursive: bool,
     active_model,
     active_processor,
     active_chroma_client,
@@ -197,8 +196,6 @@ def find_duplicates_in_folders(
     if not directories:
         return []
 
-    # Get collection from ChromaDB
-    collection = None
     try:
         collection = active_chroma_client.get_collection(name="images")
     except Exception as e:
@@ -210,8 +207,8 @@ def find_duplicates_in_folders(
     seen_paths = set()
     for directory in directories:
         store.upsert_folder(directory)
-        for image_path in list_image_files(directory, recursive=recursive):
-            record = build_media_record(image_path, directory)
+        for media_path in scan_media_paths(directory):
+            record = build_media_record(media_path, directory)
             if record.path_key in seen_paths:
                 continue
             seen_paths.add(record.path_key)
@@ -220,25 +217,9 @@ def find_duplicates_in_folders(
     if len(records) < 2:
         return []
 
-    # Try to fetch embeddings from DB
-    embeddings_list: List[np.ndarray] = []
-    paths_list: List[str] = []
-    present_map = {}
-    if collection is not None:
-        present_map = fetch_embeddings_from_db(
-            collection, [record.media_id for record in records], batch_size=1000
-        )
-    missing_records = [
-        record for record in records if record.media_id not in present_map
-    ]
-    if present_map:
-        # Append in directory order for deterministic output
-        for record in records:
-            if record.media_id in present_map:
-                embeddings_list.append(present_map[record.media_id][0])
-                paths_list.append(record.path)
-
-    # Compute missing embeddings
+    media_ids = [record.media_id for record in records]
+    frames_by_id = fetch_embeddings_from_db(collection, media_ids, batch_size=1000)
+    missing_records = [r for r in records if r.media_id not in frames_by_id]
     if missing_records:
         miss_embeddings, miss_processed = compute_embeddings(
             image_paths=[record.path for record in missing_records],
@@ -255,28 +236,27 @@ def find_duplicates_in_folders(
                 store.upsert_media_records(miss_records)
             except Exception as e:
                 print(f"Warning: failed to upsert embeddings: {e}")
-            # Append to working arrays following the directory order; first frame per file.
-            miss_map = {}
-            for p, e in zip(miss_processed, miss_embeddings):
-                miss_map.setdefault(p, e)
-            for record in records:
-                if record.path in miss_map:
-                    embeddings_list.append(miss_map[record.path])
-                    paths_list.append(record.path)
+            # Read back so new files use the same pruned frames as indexed ones.
+            frames_by_id.update(
+                fetch_embeddings_from_db(
+                    collection, [record.media_id for record in missing_records]
+                )
+            )
 
-    if len(paths_list) < 2:
+    # One row per frame, in directory order for deterministic output.
+    present = [r for r in records if r.media_id in frames_by_id]
+    if len(present) < 2:
         return []
-
-    embeddings = np.vstack(embeddings_list).astype(np.float32, copy=False)
-    processed_paths = paths_list
+    embeddings = np.vstack([frames_by_id[r.media_id] for r in present])
+    owners = [r.path for r in present for _ in frames_by_id[r.media_id]]
 
     # Print processing status in search log style
-    print(f"Processing {len(processed_paths)} candidates from DB (Duplicates)")
+    print(f"Processing {len(present)} candidates from DB (Duplicates)")
 
     # Pairwise similarity search
     pairs = find_similar_pairs(
         embeddings,
-        processed_paths,
+        owners,
         threshold=threshold,
         block_size=block_size,
         device=device,

@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Iterable
 
+import cv2
 import numpy as np
 import send2trash
 from PIL import Image
@@ -717,8 +718,15 @@ def get_media_file_info(
     dimensions = None
     dim_str = "Unknown"
     try:
-        with Image.open(canonical) as img:
-            w, h = img.size
+        if media_type_for_path(canonical) == "video":
+            cap = cv2.VideoCapture(canonical)
+            w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            cap.release()
+        else:
+            with Image.open(canonical) as img:
+                w, h = img.size
+        if w and h:
             dimensions = (w, h)
             dim_str = f"{w} × {h}"
     except Exception:

@@ -34,6 +34,7 @@ import gradio as gr
 import numpy as np
 import torch
 import torch.nn.functional as F
+from gradio.data_classes import FileData
 
 from build_db import db_add_folders, db_delete_folder, db_update_indexed_folders
 from device import get_best_device, get_best_dtype
@@ -47,6 +48,7 @@ from index_store import (
     IndexStore,
     get_media_file_info,
     is_path_under_folder,
+    media_type_for_path,
     migrate_legacy_db,
     path_and_caption_from_result,
     query_filter_for_folder,
@@ -124,6 +126,14 @@ DEFAULT_BATCH_SIZE = 16
 
 device = get_best_device()
 dtype = get_best_dtype(device)
+
+# Serve preview videos as-is: browsers decode HEVC and VP9 natively, while gr.Video
+# re-encodes anything it deems unplayable into its cache on every render. Patched on
+# the class because Gradio rebuilds components for each update.
+# ponytail: replaces a private Gradio method app-wide; if renamed, conversion returns.
+gr.Video._format_video = lambda self, path: (
+    None if path is None else FileData(path=str(path))
+)
 
 
 def get_simplified_model_identifier(model_path_str: str) -> str:
@@ -612,6 +622,16 @@ def get_relative_caption(abs_path: str, indexed_folders_text: str) -> str:
     return abs_path
 
 
+def preview_updates(path: str, exists: bool) -> tuple[dict, dict]:
+    """(image, video) preview updates showing the file in the matching component."""
+    is_video = exists and media_type_for_path(path) == "video"
+    shown = path if exists else None
+    return (
+        gr.update(value=None if is_video else shown, visible=not is_video),
+        gr.update(value=shown if is_video else None, visible=is_video),
+    )
+
+
 def render_duplicate_pair_view(
     pairs: list,
     current_idx: int,
@@ -623,14 +643,16 @@ def render_duplicate_pair_view(
             gr.Column(visible=False),
             0,
             "No duplicate pairs to review",
-            None,
+            gr.update(value=None, visible=True),
             "",
-            None,
+            gr.update(value=None, visible=True),
             "",
             gr.Button(value="Move to Recycle Bin", interactive=False),
             gr.Button(value="Move to Recycle Bin", interactive=False),
             gr.Button(interactive=False),
             gr.Button(interactive=False),
+            gr.update(value=None, visible=False),
+            gr.update(value=None, visible=False),
         )
 
     sim, path_a, path_b = pairs[current_idx]
@@ -696,19 +718,23 @@ def render_duplicate_pair_view(
 
     has_prev = current_idx > 0
     has_next = current_idx < len(pairs) - 1
+    image_a, video_a = preview_updates(path_a, can_trash_a)
+    image_b, video_b = preview_updates(path_b, can_trash_b)
 
     return (
         gr.Column(visible=True),
         current_idx,
         status_text,
-        path_a if can_trash_a else None,
+        image_a,
         info_a_html,
-        path_b if can_trash_b else None,
+        image_b,
         info_b_html,
         gr.Button(value=label_a, interactive=True),
         gr.Button(value=label_b, interactive=True),
         gr.Button(interactive=has_prev),
         gr.Button(interactive=has_next),
+        video_a,
+        video_b,
     )
 
 
@@ -894,7 +920,6 @@ def handle_find_duplicates(
                 threshold=duplicate_threshold,
                 batch_size=batch_size_ui,
                 block_size=1024,
-                recursive=True,
                 active_model=active_model_state_val,
                 active_processor=active_processor_state_val,
                 active_chroma_client=active_chroma_client_state_val,
@@ -907,7 +932,6 @@ def handle_find_duplicates(
                 threshold=duplicate_threshold,
                 batch_size=batch_size_ui,
                 block_size=1024,
-                recursive=True,
                 active_model=active_model_state_val,
                 active_processor=active_processor_state_val,
                 active_chroma_client=active_chroma_client_state_val,
@@ -1744,7 +1768,9 @@ if __name__ == "__main__":
                             "Show in Folder", visible=False, min_width=50
                         )
 
-                    with gr.Tab("Duplicate Inspector", id="tab_duplicates"):
+                    with gr.Tab(
+                        "Duplicate Inspector", id="tab_duplicates"
+                    ) as duplicates_tab:
                         with gr.Column(visible=False) as duplicate_inspector_group:
                             with gr.Row(elem_classes=["dup-nav-row"]):
                                 prev_pair_btn = gr.Button("Previous Pair", min_width=50)
@@ -1761,6 +1787,12 @@ if __name__ == "__main__":
                                             interactive=False,
                                             type="filepath",
                                             show_label=True,
+                                            elem_classes=["dup-preview"],
+                                        )
+                                        vid_a_preview = gr.Video(
+                                            label="Video A",
+                                            interactive=False,
+                                            visible=False,
                                             elem_classes=["dup-preview"],
                                         )
                                         img_a_info_html = gr.HTML(
@@ -1782,6 +1814,12 @@ if __name__ == "__main__":
                                             interactive=False,
                                             type="filepath",
                                             show_label=True,
+                                            elem_classes=["dup-preview"],
+                                        )
+                                        vid_b_preview = gr.Video(
+                                            label="Video B",
+                                            interactive=False,
+                                            visible=False,
                                             elem_classes=["dup-preview"],
                                         )
                                         img_b_info_html = gr.HTML(
@@ -1809,6 +1847,8 @@ if __name__ == "__main__":
             trash_b_btn,
             prev_pair_btn,
             next_pair_btn,
+            vid_a_preview,
+            vid_b_preview,
         ]
         inspector_and_gallery_outputs = [
             results_gallery,
@@ -2035,6 +2075,14 @@ if __name__ == "__main__":
             duplicate_pairs_state,
             indexed_folders_state,
         ]
+
+        # Gradio drops visibility updates sent while this tab is unmounted (results
+        # arrive with the Search tab selected), so re-render the pair on open.
+        duplicates_tab.select(
+            fn=lambda idx, pairs, text: handle_duplicate_nav(0, idx, pairs, text),
+            inputs=nav_inputs,
+            outputs=inspector_outputs,
+        )
 
         prev_pair_btn.click(
             fn=lambda idx, pairs, text: handle_duplicate_nav(-1, idx, pairs, text),

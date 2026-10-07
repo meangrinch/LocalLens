@@ -115,3 +115,28 @@ def test_embed_prepared_batch_chunks_by_max_batch():
     out = embed_prepared_batch(inputs, FakeModel(), "cpu", max_batch=2)
     assert calls == [2, 2, 1]
     assert out.shape == (5, 3)
+
+
+def test_extract_features_keeps_frame_batches_within_file_batch_size(tmp_path):
+    sizes = []
+
+    class FakeModel:
+        def get_image_features(self, pixel_values, return_dict):
+            sizes.append(len(pixel_values))
+            return SimpleNamespace(pooler_output=pixel_values)
+
+    class FakeImageProcessor:
+        size = {}
+
+    class FakeProcessor:
+        image_processor = FakeImageProcessor()
+
+        def __call__(self, images, **_):
+            return {"pixel_values": torch.randn(len(images), 3)}
+
+    paths = [write_video(tmp_path / f"{n}.mp4", [RED, GREEN, BLUE]) for n in "ab"]
+    _, frame_paths = model_utils.extract_features(
+        paths, FakeModel(), FakeProcessor(), "cpu"
+    )
+    assert len(frame_paths) == 2 * N_FRAMES
+    assert max(sizes) <= len(paths)

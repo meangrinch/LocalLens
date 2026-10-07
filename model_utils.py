@@ -276,5 +276,8 @@ def extract_features(
     if inputs is None:
         return _empty_features(device), []
 
-    features_np = embed_prepared_batch(inputs, model, device)
+    # Videos expand to several frames; keep each forward pass within the file batch size.
+    features_np = embed_prepared_batch(
+        inputs, model, device, max_batch=len(image_paths_batch)
+    )
     return features_np, valid_paths
