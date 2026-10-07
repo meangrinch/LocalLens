@@ -505,9 +505,7 @@ def handle_delete_folder_button_click(
     folder_to_delete_stripped = folder_to_delete.strip() if folder_to_delete else ""
 
     if not folder_to_delete_stripped:
-        gr.Warning(
-            "Folder path to delete cannot be empty. Please enter a path from the list above."
-        )
+        gr.Warning("No folder selected. Choose an indexed folder to delete.")
         return "\n".join(read_indexed_folders(current_db_path))
 
     if not current_db_path:
@@ -1558,14 +1556,20 @@ if __name__ == "__main__":
                     )
 
                     new_folder_textbox = gr.Textbox(
-                        label="Folder Path to Add/Delete",
+                        label="Folder Path to Add",
                         placeholder="/path/to/your/images",
                     )
-                    with gr.Row():
-                        add_folder_button = gr.Button("Add Folder", min_width=50)
-                        delete_folder_button = gr.Button(
-                            "Delete Folder", variant="stop", min_width=50
-                        )
+                    add_folder_button = gr.Button("Add Folder", min_width=50)
+
+                    delete_folder_dropdown = gr.Dropdown(
+                        label="Folder to Delete",
+                        choices=[],
+                        value=None,
+                        info="Removes the folder from the index; files on disk are untouched.",
+                    )
+                    delete_folder_button = gr.Button(
+                        "Delete Folder", variant="stop", min_width=50
+                    )
 
                 gr.Markdown("### Find Duplicates")
                 with gr.Accordion("Find Duplicates", open=False):
@@ -1765,10 +1769,19 @@ if __name__ == "__main__":
             return gr.Dropdown(choices=choices, value="All")
 
         def update_all_folder_dropdowns(indexed_folders_text: str):
-            """Update both active folder and duplicate folder dropdowns."""
+            """Update the active, duplicate, and delete folder dropdowns."""
             active_update = update_active_folder_dropdown(indexed_folders_text)
             dup_update = update_dropdown_from_indexed_folders(indexed_folders_text)
-            return active_update, dup_update
+            delete_update = gr.Dropdown(
+                choices=parse_indexed_folders_text(indexed_folders_text), value=None
+            )
+            return active_update, dup_update, delete_update
+
+        folder_dropdowns = [
+            active_folder_dropdown,
+            duplicate_folder_dropdown,
+            delete_folder_dropdown,
+        ]
 
         app.load(
             fn=load_and_switch_model_db,
@@ -1778,7 +1791,7 @@ if __name__ == "__main__":
         ).then(
             fn=update_all_folder_dropdowns,
             inputs=[indexed_folders_display],
-            outputs=[active_folder_dropdown, duplicate_folder_dropdown],
+            outputs=folder_dropdowns,
         ).then(
             fn=empty_duplicate_results,
             inputs=[],
@@ -1793,7 +1806,7 @@ if __name__ == "__main__":
         ).then(
             fn=update_all_folder_dropdowns,
             inputs=[indexed_folders_display],
-            outputs=[active_folder_dropdown, duplicate_folder_dropdown],
+            outputs=folder_dropdowns,
         ).then(
             fn=empty_duplicate_results,
             inputs=[],
@@ -1818,18 +1831,16 @@ if __name__ == "__main__":
         def handle_add_folder_with_dropdown_update(*args):
             """Wrapper to update indexed folders display and all folder dropdowns."""
             indexed_folders_result = handle_add_folder_button_click(*args)
-            active_update, dup_update = update_all_folder_dropdowns(
+            return indexed_folders_result, *update_all_folder_dropdowns(
                 indexed_folders_result
             )
-            return indexed_folders_result, active_update, dup_update
 
         def handle_delete_folder_with_dropdown_update(*args):
             """Wrapper to update indexed folders display and all folder dropdowns."""
             indexed_folders_result = handle_delete_folder_button_click(*args)
-            active_update, dup_update = update_all_folder_dropdowns(
+            return indexed_folders_result, *update_all_folder_dropdowns(
                 indexed_folders_result
             )
-            return indexed_folders_result, active_update, dup_update
 
         add_folder_button.click(
             fn=handle_add_folder_with_dropdown_update,
@@ -1843,22 +1854,14 @@ if __name__ == "__main__":
                 chroma_client_state,
                 batch_size_slider,
             ],
-            outputs=[
-                indexed_folders_display,
-                active_folder_dropdown,
-                duplicate_folder_dropdown,
-            ],
+            outputs=[indexed_folders_display, *folder_dropdowns],
             show_progress="full",
         )
 
         delete_folder_button.click(
             fn=handle_delete_folder_with_dropdown_update,
-            inputs=[new_folder_textbox, active_db_path_state, chroma_client_state],
-            outputs=[
-                indexed_folders_display,
-                active_folder_dropdown,
-                duplicate_folder_dropdown,
-            ],
+            inputs=[delete_folder_dropdown, active_db_path_state, chroma_client_state],
+            outputs=[indexed_folders_display, *folder_dropdowns],
             show_progress="full",
         )
 
