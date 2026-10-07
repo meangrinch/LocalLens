@@ -576,7 +576,6 @@ def get_media_file_info(
             "size_str": "0 B",
             "dimensions": None,
             "dim_str": "Unknown",
-            "pixel_count": 0,
             "mtime": 0,
             "mtime_str": "Unknown",
         }
@@ -605,13 +604,11 @@ def get_media_file_info(
 
     dimensions = None
     dim_str = "Unknown"
-    pixel_count = 0
     try:
         with Image.open(canonical) as img:
             w, h = img.size
             dimensions = (w, h)
             dim_str = f"{w} × {h}"
-            pixel_count = w * h
     except Exception:
         pass
 
@@ -623,7 +620,6 @@ def get_media_file_info(
         "size_str": size_str,
         "dimensions": dimensions,
         "dim_str": dim_str,
-        "pixel_count": pixel_count,
         "mtime": mtime,
         "mtime_str": mtime_str,
     }

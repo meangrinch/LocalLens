@@ -12,7 +12,6 @@ from app import (
     render_duplicate_pair_view,
 )
 from find_duplicates import (
-    determine_auto_trash_target,
     filter_gallery_items,
     filter_resolved_pairs,
 )
@@ -63,7 +62,6 @@ def test_get_media_file_info_existing(tmp):
     assert info["exists"]
     assert info["dimensions"] == (120, 80)
     assert info["dim_str"] == "120 × 80"
-    assert info["pixel_count"] == 120 * 80
     assert info["size"] > 0
     assert "sample.png" in info["caption"]
 
@@ -135,25 +133,6 @@ def test_trash_locked_file_failure(tmp, db_dir, store, monkeypatch):
     assert not trash_and_delete_indexed_media(img_path, db_dir, collection)
     assert mid in store.get_media_by_ids([mid])
     collection.delete.assert_not_called()
-
-
-def test_determine_auto_trash_target_dimensions():
-    small = {"exists": True, "pixel_count": 800 * 600, "size": 5000}
-    large = {"exists": True, "pixel_count": 1920 * 1080, "size": 15000}
-    assert determine_auto_trash_target(small, large) == "left"
-    assert determine_auto_trash_target(large, small) == "right"
-
-
-def test_determine_auto_trash_target_file_size():
-    a = {"exists": True, "pixel_count": 1000, "size": 2000}
-    b = {"exists": True, "pixel_count": 1000, "size": 5000}
-    assert determine_auto_trash_target(a, b) == "left"
-    assert determine_auto_trash_target(b, a) == "right"
-
-
-def test_determine_auto_trash_target_identical():
-    a = {"exists": True, "pixel_count": 1000, "size": 2000}
-    assert determine_auto_trash_target(a, dict(a)) is None
 
 
 def test_filter_resolved_pairs():
