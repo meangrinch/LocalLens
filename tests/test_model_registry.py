@@ -2,7 +2,6 @@ import pytest
 
 from app import (
     AVAILABLE_MODELS,
-    MODEL_BATCH_SIZE_DEFAULTS,
     MODEL_CONFIDENCE_DEFAULTS,
     generate_db_path_for_model,
     get_simplified_model_identifier,
@@ -15,13 +14,6 @@ def test_confidence_defaults(model):
     conf = MODEL_CONFIDENCE_DEFAULTS[model]
     thresh = "siglip_thresh" if get_model_type(model) == "siglip" else "clip_thresh"
     assert {thresh, "combined_thresh", "image_only_thresh"} <= conf.keys()
-
-
-@pytest.mark.parametrize("model", AVAILABLE_MODELS)
-def test_batch_size_defaults(model):
-    bs = MODEL_BATCH_SIZE_DEFAULTS[model]
-    assert isinstance(bs, int)
-    assert 4 <= bs <= 256
 
 
 def test_model_identifiers_are_unique():

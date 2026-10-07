@@ -391,7 +391,7 @@ if __name__ == "__main__":
         help="Folder path to remove from the index and database.",
     )
     parser.add_argument(
-        "--batch_size", type=int, default=96, help="Batch size for adding images to DB."
+        "--batch_size", type=int, default=16, help="Batch size for adding images to DB."
     )
     args = parser.parse_args()
 

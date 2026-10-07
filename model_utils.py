@@ -14,6 +14,9 @@ TRUST_REMOTE_MODEL_CODE = True
 # Decode JPEGs to at least this multiple of the model input size. Measured drift vs a
 # full decode: worst-case cosine ~0.998, while 1x drifted to ~0.984 on SigLIP2 so400m.
 JPEG_DRAFT_MARGIN = 2
+# Share of free VRAM indexing batches may use; the rest absorbs fragmentation, text
+# embedding during searches, and other GPU apps.
+VRAM_BUDGET_FRACTION = 0.7
 
 _LOADER_MAX_WORKERS = max(1, (os.cpu_count() or 8) // 2)
 _loader_executor: ThreadPoolExecutor | None = None
@@ -190,6 +193,38 @@ def embed_prepared_batch(
         features_np = features_np.astype(target_type)
 
     return features_np
+
+
+def fit_batch_size(
+    free_bytes: float, per_image_bytes: float, max_batch_size: int
+) -> int:
+    """Largest batch (step of 4, at least 4) fitting the VRAM budget, capped at max."""
+    fit = int(free_bytes * VRAM_BUDGET_FRACTION / per_image_bytes) // 4 * 4
+    return max(4, min(max_batch_size, fit))
+
+
+def probe_batch_size(model, processor, device, max_batch_size: int) -> int:
+    """Sizes indexing batches to free CUDA memory by embedding a few blank images.
+
+    Oversized batches don't fail on Windows; the driver spills into shared system
+    memory and indexing slows several-fold. Other devices keep max_batch_size.
+    """
+    device = torch.device(device)
+    if device.type != "cuda":
+        return max_batch_size
+    probe_size = 8
+    # Large blank images so variable-resolution processors produce full-size inputs.
+    inputs = preprocess_images_cpu(
+        [Image.new("RGB", (1024, 1024))] * probe_size, processor
+    )
+    torch.cuda.synchronize(device)
+    torch.cuda.reset_peak_memory_stats(device)
+    baseline = torch.cuda.memory_allocated(device)
+    embed_prepared_batch(inputs, model, device)
+    per_image = (torch.cuda.max_memory_allocated(device) - baseline) / probe_size
+    torch.cuda.empty_cache()
+    free_bytes, _ = torch.cuda.mem_get_info(device)
+    return fit_batch_size(free_bytes, per_image, max_batch_size)
 
 
 def extract_features(

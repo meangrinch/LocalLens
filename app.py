@@ -54,7 +54,7 @@ from index_store import (
     reveal_in_file_manager,
     trash_and_delete_indexed_media,
 )
-from model_utils import load_model_and_processor
+from model_utils import load_model_and_processor, probe_batch_size
 
 __version__ = "1.6.2"
 
@@ -119,17 +119,8 @@ MODEL_CONFIDENCE_DEFAULTS = {
         "image_only_thresh": 0.85,
     },
 }
-FALLBACK_BATCH_SIZE = 64
-MODEL_BATCH_SIZE_DEFAULTS = {
-    "google/siglip2-so400m-patch14-384": 64,
-    "google/siglip2-so400m-patch16-512": 64,
-    "apple/DFN5B-CLIP-ViT-H-14-378": 32,
-    "google/siglip2-giant-opt-patch16-384": 16,
-    "facebook/metaclip-h14-fullcc2.5b": 64,
-    "laion/CLIP-ViT-H-14-laion2B-s32B-b79K": 64,
-    "openai/clip-vit-large-patch14": 64,
-    "google/siglip2-base-patch16-224": 128,
-}
+# Upper bound; probe_batch_size lowers it when the model's batches won't fit in VRAM.
+DEFAULT_BATCH_SIZE = 16
 
 device = get_best_device()
 dtype = get_best_dtype(device)
@@ -223,7 +214,7 @@ def load_and_switch_model_db(
             FALLBACK_COMBINED_THRESHOLD,
             FALLBACK_IMAGE_ONLY_THRESHOLD,
             gr.Dropdown(interactive=True),
-            FALLBACK_BATCH_SIZE,
+            DEFAULT_BATCH_SIZE,
         )
         return
 
@@ -232,9 +223,7 @@ def load_and_switch_model_db(
     ui_clip_thresh_to_set = FALLBACK_CLIP_THRESHOLD
     ui_combined_thresh_to_set = FALLBACK_COMBINED_THRESHOLD
     ui_image_only_thresh_to_set = FALLBACK_IMAGE_ONLY_THRESHOLD
-    ui_batch_size_to_set = MODEL_BATCH_SIZE_DEFAULTS.get(
-        selected_model_path, FALLBACK_BATCH_SIZE
-    )
+    ui_batch_size_to_set = DEFAULT_BATCH_SIZE
     new_db_path = generate_db_path_for_model(selected_model_path)
     progress(0.1, desc=f"DB path: {new_db_path}")
     if not os.path.exists(new_db_path):
@@ -253,6 +242,10 @@ def load_and_switch_model_db(
         progress(0.3, desc="Loading model...")
         new_model, new_processor, new_model_type = load_model_and_processor(
             selected_model_path, device, dtype
+        )
+        progress(0.5, desc="Sizing batches to available memory...")
+        ui_batch_size_to_set = probe_batch_size(
+            new_model, new_processor, device, DEFAULT_BATCH_SIZE
         )
         progress(0.6, desc="Calculating params...")
         new_logit_scale_exp_val = (
@@ -337,7 +330,7 @@ def load_and_switch_model_db(
             FALLBACK_COMBINED_THRESHOLD,
             FALLBACK_IMAGE_ONLY_THRESHOLD,
             gr.Dropdown(interactive=True),
-            FALLBACK_BATCH_SIZE,
+            DEFAULT_BATCH_SIZE,
         )
 
 
@@ -1702,7 +1695,7 @@ if __name__ == "__main__":
                         minimum=4,
                         maximum=256,
                         step=4,
-                        value=64,
+                        value=DEFAULT_BATCH_SIZE,
                         label="Processing Batch Size",
                         info="Images to process in one batch during add/update. Higher = more memory usage.",
                     )
