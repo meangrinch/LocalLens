@@ -18,12 +18,14 @@ from PIL import Image
 
 INDEX_SCHEMA_VERSION = "1"
 INDEX_DB_FILENAME = "index.sqlite"
-# schema_meta key set once animated media embedded as a single frame were invalidated.
+# schema_meta keys of one-time invalidations, set once they have run for an index.
 FRAME_SAMPLING_KEY = "frame_sampling"
+STILL_DECODING_KEY = "still_decoding"
 
 IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"]
 VIDEO_EXTENSIONS = [".mp4", ".mov", ".avi", ".mkv", ".webm"]
 ALL_EXTENSIONS = IMAGE_EXTENSIONS + VIDEO_EXTENSIONS
+ORIENTATION_TAG = 0x0112
 # Sampled frames at least this similar to an already kept frame are not stored.
 FRAME_DISTINCT_THRESHOLD = 0.95
 
@@ -159,6 +161,26 @@ def distinct_frame_indices(
         if all(float(embedding @ embeddings[k]) < threshold for k in kept):
             kept.append(index)
     return kept
+
+
+def _decodes_differently(path: str) -> bool:
+    """Whether EXIF orientation or multi-frame handling changes how `path` decodes.
+
+    Reads headers only: PNG getexif() would decode the whole image to find eXIf.
+    """
+    if os.path.splitext(path)[1].lower() not in (".jpg", ".jpeg", ".png", ".webp"):
+        return False
+    try:
+        with Image.open(path) as img:
+            exif = Image.Exif()
+            if img.info.get("exif"):
+                exif.load(img.info["exif"])
+            return exif.get(ORIENTATION_TAG, 1) != 1 or getattr(
+                img, "is_animated", False
+            )
+    except Exception:
+        # Unreadable files fail at embedding instead; this must not abort the sync.
+        return False
 
 
 def batched(items: list, batch_size: int) -> Iterable[list]:
@@ -435,31 +457,35 @@ class IndexStore:
                 needing.append(record)
         return needing
 
-    def invalidate_animated_media(self) -> int:
-        """One-time: marks videos/GIFs/WebPs embedded as a single frame for re-embedding.
+    def _invalidate_once(self, key: str, is_stale) -> int:
+        """Marks media whose path satisfies is_stale for re-embedding, once per index.
 
-        Returns how many media were marked; 0 once it has run for this index.
+        Returns how many media were marked; 0 once `key` has run for this index.
         """
-        animated = set(VIDEO_EXTENSIONS) | {".gif", ".webp"}
         with self.connect() as conn:
             done = conn.execute(
-                "SELECT 1 FROM schema_meta WHERE key = ?", (FRAME_SAMPLING_KEY,)
+                "SELECT 1 FROM schema_meta WHERE key = ?", (key,)
             ).fetchone()
             if done:
                 return 0
             rows = conn.execute("SELECT media_id, path FROM media").fetchall()
-            stale = [
-                (row["media_id"],)
-                for row in rows
-                if os.path.splitext(row["path"])[1].lower() in animated
-            ]
+            stale = [(row["media_id"],) for row in rows if is_stale(row["path"])]
             # records_needing_embedding re-embeds any record whose mtime differs.
             conn.executemany("UPDATE media SET mtime = -1 WHERE media_id = ?", stale)
-            conn.execute(
-                "INSERT INTO schema_meta(key, value) VALUES (?, '1')",
-                (FRAME_SAMPLING_KEY,),
-            )
+            conn.execute("INSERT INTO schema_meta(key, value) VALUES (?, '1')", (key,))
         return len(stale)
+
+    def invalidate_animated_media(self) -> int:
+        """Videos/GIFs/WebPs that 1.6 embedded from their first frame only."""
+        animated = set(VIDEO_EXTENSIONS) | {".gif", ".webp"}
+        return self._invalidate_once(
+            FRAME_SAMPLING_KEY,
+            lambda path: os.path.splitext(path)[1].lower() in animated,
+        )
+
+    def invalidate_redecoded_stills(self) -> int:
+        """Images whose decoding changed since 1.6: EXIF-rotated, MPO and APNG files."""
+        return self._invalidate_once(STILL_DECODING_KEY, _decodes_differently)
 
     def delete_media_ids(self, media_ids: list[str]) -> None:
         if not media_ids:

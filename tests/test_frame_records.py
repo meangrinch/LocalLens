@@ -4,6 +4,7 @@ import uuid
 import chromadb
 import numpy as np
 import pytest
+from PIL import Image
 
 from index_store import (
     IndexStore,
@@ -88,3 +89,27 @@ def test_invalidate_animated_media_runs_once(tmp_path):
     assert mtimes["v.mp4"] == mtimes["a.gif"] == mtimes["b.webp"] == -1
     assert mtimes["c.png"] != -1
     assert store.invalidate_animated_media() == 0
+
+
+def test_invalidate_redecoded_stills_marks_rotated_and_multi_image_files(tmp_path):
+    store = IndexStore(str(tmp_path / "db"))
+    exif = Image.Exif()
+    exif[0x0112] = 6
+    red, blue = Image.new("RGB", (8, 8), "red"), Image.new("RGB", (8, 8), "blue")
+    red.save(tmp_path / "rotated.jpg", exif=exif)
+    red.save(tmp_path / "plain.jpg")
+    red.save(tmp_path / "mpo.jpg", "MPO", save_all=True, append_images=[blue])
+    red.save(tmp_path / "anim.png", save_all=True, append_images=[blue])
+    red.save(tmp_path / "plain.png")
+    paths = [str(p) for p in tmp_path.iterdir() if p.is_file()]
+    paths.append(touch(str(tmp_path / "v.mp4")))
+    store.upsert_media_records([build_media_record(p, str(tmp_path)) for p in paths])
+
+    assert store.invalidate_redecoded_stills() == 3
+    stale = {
+        os.path.basename(r.path)
+        for r in store.get_media_by_paths(paths).values()
+        if r.mtime == -1
+    }
+    assert stale == {"rotated.jpg", "mpo.jpg", "anim.png"}
+    assert store.invalidate_redecoded_stills() == 0

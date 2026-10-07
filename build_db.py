@@ -150,7 +150,12 @@ def process_images(
     store = IndexStore(db_path_str)
     invalidated = store.invalidate_animated_media()
     if invalidated:
-        print(f"Re-embedding {invalidated} videos/animated images as multiple frames.")
+        print(
+            f"Marked {invalidated} videos/animated images for multi-frame re-embedding."
+        )
+    invalidated = store.invalidate_redecoded_stills()
+    if invalidated:
+        print(f"Marked {invalidated} rotated or multi-image photos for re-embedding.")
 
     if mode == "add":
         print(f"Adding folders: {', '.join(folders)}")
