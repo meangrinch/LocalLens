@@ -575,26 +575,12 @@ def parse_indexed_folders_text(indexed_folders_text: str) -> list[str]:
     ]
 
 
-def update_duplicate_folder_dropdown(current_db_path: str):
-    """Updates the duplicate folder dropdown with indexed folders."""
-    if not current_db_path:
-        return gr.Dropdown(choices=[], value=None)
-    folders = read_indexed_folders(current_db_path)
-    if not folders:
-        return gr.Dropdown(choices=[], value=None)
-    choices = ["All"] + folders
-    return gr.Dropdown(choices=choices, value="All")
-
-
-def update_active_folder_dropdown(indexed_folders_text: str):
-    """Updates the active folder dropdown from indexed folders text, with 'All' as default."""
-    if not indexed_folders_text:
-        return gr.Dropdown(choices=[], value=None)
+def folder_dropdown_with_all(indexed_folders_text: str):
+    """Folder dropdown update with an 'All' option first, defaulting to 'All'."""
     folders = parse_indexed_folders_text(indexed_folders_text)
     if not folders:
         return gr.Dropdown(choices=[], value=None)
-    choices = ["All"] + folders
-    return gr.Dropdown(choices=choices, value="All")
+    return gr.Dropdown(choices=["All", *folders], value="All")
 
 
 def filter_gallery_by_active_folder(gallery_images: list, active_folder: str) -> list:
@@ -1853,20 +1839,10 @@ if __name__ == "__main__":
             batch_size_slider,
         ]
 
-        def update_dropdown_from_indexed_folders(indexed_folders_text: str):
-            """Update duplicate dropdown from indexed folders text."""
-            if not indexed_folders_text:
-                return gr.Dropdown(choices=[], value=None)
-            folders = parse_indexed_folders_text(indexed_folders_text)
-            if not folders:
-                return gr.Dropdown(choices=[], value=None)
-            choices = ["All"] + folders
-            return gr.Dropdown(choices=choices, value="All")
-
         def update_all_folder_dropdowns(indexed_folders_text: str):
             """Update the active, duplicate, and delete folder dropdowns."""
-            active_update = update_active_folder_dropdown(indexed_folders_text)
-            dup_update = update_dropdown_from_indexed_folders(indexed_folders_text)
+            active_update = folder_dropdown_with_all(indexed_folders_text)
+            dup_update = folder_dropdown_with_all(indexed_folders_text)
             delete_update = gr.Dropdown(
                 choices=parse_indexed_folders_text(indexed_folders_text), value=None
             )
