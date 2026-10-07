@@ -982,6 +982,11 @@ def handle_find_duplicates(
         return empty_duplicate_results()
 
 
+def caption_with_score(caption: str, score: float, show: bool) -> str:
+    """Appends the score a search mode thresholds on, so captions match the sliders."""
+    return f"{caption} · {score:.3f}" if show else caption
+
+
 def search(
     query: str,
     query_image_pil,
@@ -999,6 +1004,7 @@ def search(
     current_db_path: str,
     verbose_ui: bool,
     active_folder: str = "All",
+    show_scores: bool = False,
 ):
     start_time = time.time()
     text_query_present = bool(query and query.strip())
@@ -1149,7 +1155,10 @@ def search(
                     doc_paths_all[idx], metadata
                 )
                 if os.path.exists(doc_path):
-                    gallery_images.append((doc_path, caption))
+                    score = batch_logit_val_for_print[idx].item()
+                    gallery_images.append(
+                        (doc_path, caption_with_score(caption, score, show_scores))
+                    )
                 else:
                     print(f"Missing: {doc_path}")
 
@@ -1226,7 +1235,12 @@ def search(
 
             for doc_path, caption, cos_sim_val in temp_results:
                 if os.path.exists(doc_path):
-                    gallery_images.append((doc_path, caption))
+                    gallery_images.append(
+                        (
+                            doc_path,
+                            caption_with_score(caption, cos_sim_val, show_scores),
+                        )
+                    )
                     if verbose_ui:
                         print(f"✓ {doc_path} (img_cos_sim: {cos_sim_val:.4f})")
                 else:
@@ -1350,7 +1364,9 @@ def search(
             : int(initial_n_results_ui)
         ]:
             if os.path.exists(doc_path):
-                gallery_images.append((doc_path, caption))
+                gallery_images.append(
+                    (doc_path, caption_with_score(caption, score, show_scores))
+                )
                 if verbose_ui:
                     print(
                         f"✓ {doc_path} (comb_score: {score:.4f}, txt_sim: {ts:.4f}, img_sim: {Is:.4f})"
@@ -1667,6 +1683,11 @@ if __name__ == "__main__":
                         label="Verbose Logging",
                         info="Show detailed confidence scores and similarity metrics in console output.",
                     )
+                    show_scores_checkbox = gr.Checkbox(
+                        value=False,
+                        label="Show Scores in Captions",
+                        info="Append each result's score (logit for text, cosine for image/combined) to its caption.",
+                    )
 
             # Right Column: Tabs (Search Results & Duplicate Inspector)
             with gr.Column(scale=3):
@@ -1972,6 +1993,7 @@ if __name__ == "__main__":
             active_db_path_state,
             verbose_checkbox,
             active_folder_dropdown,
+            show_scores_checkbox,
         ]
 
         query_textbox.submit(
