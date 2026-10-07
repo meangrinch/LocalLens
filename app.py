@@ -550,14 +550,23 @@ def handle_delete_folder_button_click(
 
 
 def render_index_summary(db_path: str | None):
-    """Per-folder and total indexed item counts for the Database Management table."""
-    if not db_path:
-        return gr.Dataframe(value=[], label="Indexed Folders")
-    counts, total = IndexStore(db_path).folder_item_counts()
-    return gr.Dataframe(
-        value=[[folder, f"{count:,}"] for folder, count in counts],
-        label=f"Indexed Folders ({total:,} items total)",
+    """Per-folder and total indexed item counts for the Database Management panel."""
+    counts, total = IndexStore(db_path).folder_item_counts() if db_path else ([], 0)
+    rows = "".join(
+        f"<div class='index-row'><span class='index-path'>{html.escape(folder)}</span>"
+        f"<span class='index-count'>{count:,}</span></div>"
+        for folder, count in counts
     )
+    # Mirrors the title / info / input structure of the neighbouring Gradio inputs.
+    return (
+        "<span class='index-title'>Indexed Folders</span>"
+        f"<div class='index-info'>{total:,} items total</div>"
+        f"<div class='index-list'>{rows}</div>"
+    )
+
+
+# Lets the Remove Folder dropdown be reset; handlers treat "" as no selection.
+NO_FOLDER_CHOICE = ("None", "")
 
 
 def parse_indexed_folders_text(indexed_folders_text: str) -> list[str]:
@@ -1600,27 +1609,21 @@ if __name__ == "__main__":
                     )
                     # Newline-separated folder paths; parsed by handlers as the folder list.
                     indexed_folders_state = gr.State("")
-                    index_summary = gr.Dataframe(
-                        headers=["Folder", "Items"],
-                        label="Indexed Folders",
-                        interactive=False,
-                        wrap=True,
-                        column_widths=["75%", "25%"],
-                    )
+                    index_summary = gr.HTML(container=True)
                     update_db_button = gr.Button(
                         "Update/Sync Full DB", variant="primary"
                     )
 
                     new_folder_textbox = gr.Textbox(
-                        label="Folder Path to Add",
+                        label="Add Folder",
                         placeholder="/path/to/your/images",
                     )
                     add_folder_button = gr.Button("Add Folder", min_width=50)
 
                     delete_folder_dropdown = gr.Dropdown(
-                        label="Folder to Delete",
-                        choices=[],
-                        value=None,
+                        label="Remove Folder",
+                        choices=[NO_FOLDER_CHOICE],
+                        value="",
                         info="Removes the folder from the index; files on disk are untouched.",
                     )
                     delete_folder_button = gr.Button(
@@ -1699,15 +1702,15 @@ if __name__ == "__main__":
                         label="Processing Batch Size",
                         info="Images to process in one batch during add/update. Higher = more memory usage.",
                     )
+                    show_scores_checkbox = gr.Checkbox(
+                        value=False,
+                        label="Show Scores in Captions",
+                        info="Append each result's score to its caption.",
+                    )
                     verbose_checkbox = gr.Checkbox(
                         value=False,
                         label="Verbose Logging",
                         info="Show detailed confidence scores and similarity metrics in console output.",
-                    )
-                    show_scores_checkbox = gr.Checkbox(
-                        value=False,
-                        label="Show Scores in Captions",
-                        info="Append each result's score (logit for text, cosine for image/combined) to its caption.",
                     )
 
             # Right Column: Tabs (Search Results & Duplicate Inspector)
@@ -1838,7 +1841,11 @@ if __name__ == "__main__":
             active_update = folder_dropdown_with_all(indexed_folders_text)
             dup_update = folder_dropdown_with_all(indexed_folders_text)
             delete_update = gr.Dropdown(
-                choices=parse_indexed_folders_text(indexed_folders_text), value=None
+                choices=[
+                    NO_FOLDER_CHOICE,
+                    *parse_indexed_folders_text(indexed_folders_text),
+                ],
+                value="",
             )
             return active_update, dup_update, delete_update
 
@@ -1913,7 +1920,8 @@ if __name__ == "__main__":
                 indexed_folders_result
             )
 
-        add_folder_button.click(
+        gr.on(
+            [add_folder_button.click, new_folder_textbox.submit],
             fn=handle_add_folder_with_dropdown_update,
             inputs=[
                 new_folder_textbox,
