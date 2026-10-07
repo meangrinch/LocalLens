@@ -1,16 +1,23 @@
+# Python
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
-/.pytest_cache/
-/.ruff_cache/
-/models/
+.ruff_cache/
+.pytest_cache/
+
+# Virtual Environments
 /venv/
 /.venv/
-start-webui.bat
+
+# App data
 /img_db/
-/tests/
+
+# Local launchers
+start-webui.bat
+
+# Editors & OS
+.vscode/
 .DS_Store
 Thumbs.db
-/.vscode/
+
+# Logs & scratch
 *.log
+.scratch/
