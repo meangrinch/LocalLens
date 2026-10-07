@@ -43,7 +43,7 @@ def load_model_and_processor(
     model = (
         AutoModel.from_pretrained(
             model_path,
-            torch_dtype=dtype,
+            dtype=dtype,
             trust_remote_code=TRUST_REMOTE_MODEL_CODE,
             use_safetensors=True,
         )
@@ -52,7 +52,7 @@ def load_model_and_processor(
     )
 
     processor = AutoProcessor.from_pretrained(
-        model_path, use_fast=True, trust_remote_code=TRUST_REMOTE_MODEL_CODE
+        model_path, trust_remote_code=TRUST_REMOTE_MODEL_CODE
     )
 
     model_type = get_model_type(model_path)
@@ -179,7 +179,9 @@ def embed_prepared_batch(
     inputs = inputs.to(device)
 
     with torch.no_grad():
-        image_features = model.get_image_features(**inputs)
+        image_features = model.get_image_features(
+            **inputs, return_dict=True
+        ).pooler_output
         image_features = F.normalize(image_features, p=2, dim=-1)
         features_np = image_features.float().cpu().numpy()
 

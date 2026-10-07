@@ -1046,7 +1046,9 @@ def search(
                 del text_processing_args["max_length"]
 
             inputs = current_processor(**text_processing_args).to(device)
-            text_features_from_model = current_model.get_text_features(**inputs)
+            text_features_from_model = current_model.get_text_features(
+                **inputs, return_dict=True
+            ).pooler_output
             text_features_float32 = text_features_from_model.to(torch.float32)
 
             if current_model_type == "siglip" or current_model_type == "clip":
@@ -1063,7 +1065,9 @@ def search(
             inputs = current_processor(
                 images=[query_image_pil], return_tensors="pt"
             ).to(device)
-            query_image_features = current_model.get_image_features(**inputs)
+            query_image_features = current_model.get_image_features(
+                **inputs, return_dict=True
+            ).pooler_output
             query_image_features_float32 = query_image_features.to(torch.float32)
 
             if current_model_type == "siglip" or current_model_type == "clip":
@@ -1546,12 +1550,7 @@ function() {
 """
 
 if __name__ == "__main__":
-    with gr.Blocks(
-        theme=gr.themes.Default(primary_hue="purple"),
-        js=js_credits,
-        css_paths=str(css_path),
-        title="LocalLens",
-    ) as app:
+    with gr.Blocks(title="LocalLens") as app:
         gr.Markdown("# LocalLens")
 
         active_model_path_state = gr.State(DEFAULT_MODEL_PATH)
@@ -2103,4 +2102,10 @@ if __name__ == "__main__":
             ],
         )
 
-    app.launch(inbrowser=True, allowed_paths=get_allowed_gallery_paths())
+    app.launch(
+        inbrowser=True,
+        allowed_paths=get_allowed_gallery_paths(),
+        theme=gr.themes.Default(primary_hue="purple"),
+        js=js_credits,
+        css_paths=str(css_path),
+    )
