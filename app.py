@@ -1495,7 +1495,7 @@ def handle_gallery_select(evt: gr.SelectData):
     """Remembers the selected result's path for the Show in Folder button."""
     item = evt.value or {}
     path = (item.get("image") or item.get("video") or {}).get("path")
-    return path, gr.Button(interactive=bool(path))
+    return path, gr.Button(visible=bool(path))
 
 
 def handle_reveal(path: str | None):
@@ -1726,7 +1726,7 @@ if __name__ == "__main__":
                             interactive=False,
                         )
                         reveal_result_btn = gr.Button(
-                            "Show in Folder", interactive=False, min_width=50
+                            "Show in Folder", visible=False, min_width=50
                         )
 
                     with gr.Tab("Duplicate Inspector", id="tab_duplicates"):
@@ -1987,8 +1987,10 @@ if __name__ == "__main__":
             inputs=None,
             outputs=[selected_result_path_state, reveal_result_btn],
         )
-        results_gallery.change(
-            fn=lambda: (None, gr.Button(interactive=False)),
+        # Forget the selection once its preview is gone, so the button can't reveal a stale file.
+        gr.on(
+            [results_gallery.change, results_gallery.preview_close],
+            fn=lambda: (None, gr.Button(visible=False)),
             inputs=None,
             outputs=[selected_result_path_state, reveal_result_btn],
         )
