@@ -1483,28 +1483,25 @@ def get_allowed_gallery_paths() -> list[str]:
     return paths
 
 
-def also_store_gallery(fn, index: int = 0):
-    """Repeats fn's gallery output (at `index`) as an extra output for gallery_items_state.
+def with_duplicate_gallery(fn):
+    """Also returns fn's gallery output (its first) for duplicate_gallery_state.
 
-    The Gallery component only holds Gradio cache copies, so the original
-    (path, caption) items are kept server-side for Show in Folder and trashing.
+    Trashing can't take the Gallery itself as an input: Gradio rejects gallery
+    inputs that reference files no longer on disk, which "Remove Record" is for.
     """
 
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
         result = fn(*args, **kwargs)
-        if isinstance(result, tuple):
-            return (*result, result[index])
-        return result, result
+        return (*result, result[0])
 
     return wrapper
 
 
-def handle_gallery_select(gallery_items: list, evt: gr.SelectData):
-    """Remembers the selected result's original path for the Show in Folder button."""
-    path = None
-    if gallery_items and 0 <= evt.index < len(gallery_items):
-        path = gallery_items[evt.index][0]
+def handle_gallery_select(evt: gr.SelectData):
+    """Remembers the selected result's path for the Show in Folder button."""
+    item = evt.value or {}
+    path = (item.get("image") or item.get("video") or {}).get("path")
     return path, gr.Button(interactive=bool(path))
 
 
@@ -1550,6 +1547,9 @@ function() {
 """
 
 if __name__ == "__main__":
+    # Serve indexed media in place rather than copying every result into Gradio's
+    # cache; this also keeps gallery paths pointing at the original files.
+    gr.set_static_paths(get_allowed_gallery_paths())
     with gr.Blocks(title="LocalLens") as app:
         gr.Markdown("# LocalLens")
 
@@ -1565,7 +1565,7 @@ if __name__ == "__main__":
 
         duplicate_pairs_state = gr.State([])
         selected_result_path_state = gr.State(None)
-        gallery_items_state = gr.State([])
+        duplicate_gallery_state = gr.State([])
         duplicate_pair_idx_state = gr.State(0)
 
         with gr.Row():
@@ -1805,7 +1805,6 @@ if __name__ == "__main__":
             duplicate_pairs_state,
             main_tabs,
             *inspector_outputs,
-            gallery_items_state,
         ]
         duplicate_view_reset_outputs = [
             duplicate_pairs_state,
@@ -1869,7 +1868,7 @@ if __name__ == "__main__":
             inputs=[indexed_folders_state],
             outputs=folder_dropdowns,
         ).then(
-            fn=also_store_gallery(empty_duplicate_results),
+            fn=empty_duplicate_results,
             inputs=[],
             outputs=inspector_and_gallery_outputs,
         ).then(**refresh_index_summary)
@@ -1884,7 +1883,7 @@ if __name__ == "__main__":
             inputs=[indexed_folders_state],
             outputs=folder_dropdowns,
         ).then(
-            fn=also_store_gallery(empty_duplicate_results),
+            fn=empty_duplicate_results,
             inputs=[],
             outputs=inspector_and_gallery_outputs,
         ).then(**refresh_index_summary)
@@ -1942,7 +1941,7 @@ if __name__ == "__main__":
         ).then(**refresh_index_summary)
 
         find_duplicates_button.click(
-            fn=also_store_gallery(handle_find_duplicates),
+            fn=with_duplicate_gallery(handle_find_duplicates),
             inputs=[
                 duplicate_folder_dropdown,
                 duplicate_threshold_slider,
@@ -1957,42 +1956,42 @@ if __name__ == "__main__":
                 initial_n_results_slider,
                 indexed_folders_state,
             ],
-            outputs=inspector_and_gallery_outputs,
+            outputs=[*inspector_and_gallery_outputs, duplicate_gallery_state],
             show_progress="full",
         ).then(**refresh_index_summary)
 
         trash_inputs = [
             duplicate_pair_idx_state,
             duplicate_pairs_state,
-            gallery_items_state,
+            duplicate_gallery_state,
             active_db_path_state,
             chroma_client_state,
             indexed_folders_state,
         ]
 
         trash_a_btn.click(
-            fn=also_store_gallery(
+            fn=with_duplicate_gallery(
                 lambda idx, pairs, gal, db, client, text: handle_trash_duplicate(
                     "left", idx, pairs, gal, db, client, text
                 )
             ),
             inputs=trash_inputs,
-            outputs=inspector_and_gallery_outputs,
+            outputs=[*inspector_and_gallery_outputs, duplicate_gallery_state],
         ).then(**refresh_index_summary)
 
         trash_b_btn.click(
-            fn=also_store_gallery(
+            fn=with_duplicate_gallery(
                 lambda idx, pairs, gal, db, client, text: handle_trash_duplicate(
                     "right", idx, pairs, gal, db, client, text
                 )
             ),
             inputs=trash_inputs,
-            outputs=inspector_and_gallery_outputs,
+            outputs=[*inspector_and_gallery_outputs, duplicate_gallery_state],
         ).then(**refresh_index_summary)
 
         results_gallery.select(
             fn=handle_gallery_select,
-            inputs=[gallery_items_state],
+            inputs=None,
             outputs=[selected_result_path_state, reveal_result_btn],
         )
         results_gallery.change(
@@ -2057,9 +2056,9 @@ if __name__ == "__main__":
             inputs=[],
             outputs=duplicate_view_reset_outputs,
         ).then(
-            fn=also_store_gallery(search),
+            fn=search,
             inputs=search_inputs,
-            outputs=[results_gallery, gallery_items_state],
+            outputs=[results_gallery],
         )
 
         search_button.click(
@@ -2067,9 +2066,9 @@ if __name__ == "__main__":
             inputs=[],
             outputs=duplicate_view_reset_outputs,
         ).then(
-            fn=also_store_gallery(search),
+            fn=search,
             inputs=search_inputs,
-            outputs=[results_gallery, gallery_items_state],
+            outputs=[results_gallery],
         )
 
         random_search_inputs = [
@@ -2083,13 +2082,13 @@ if __name__ == "__main__":
             inputs=[],
             outputs=duplicate_view_reset_outputs,
         ).then(
-            fn=also_store_gallery(random_search),
+            fn=random_search,
             inputs=random_search_inputs,
-            outputs=[results_gallery, gallery_items_state],
+            outputs=[results_gallery],
         )
 
         clear_button.click(
-            fn=also_store_gallery(clear_search_and_gallery, index=2),
+            fn=clear_search_and_gallery,
             inputs=[],
             outputs=[
                 query_textbox,
@@ -2098,7 +2097,6 @@ if __name__ == "__main__":
                 duplicate_pairs_state,
                 main_tabs,
                 *inspector_outputs,
-                gallery_items_state,
             ],
         )
 
