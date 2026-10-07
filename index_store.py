@@ -1,6 +1,7 @@
 import ctypes
 import hashlib
 import os
+import re
 import sqlite3
 import subprocess
 import sys
@@ -402,8 +403,10 @@ class IndexStore:
         params: list = []
         where_clause = ""
         if folder_path and folder_path != "All":
-            where_clause = "WHERE folder_id = ?"
-            params.append(folder_id_for_path(folder_path))
+            # By path, so files owned by an enclosing indexed folder are included.
+            prefix = path_key(folder_path).rstrip(os.sep) + os.sep
+            where_clause = "WHERE substr(path_key, 1, ?) = ?"
+            params += [len(prefix), prefix]
         with self.connect() as conn:
             rows = conn.execute(
                 f"SELECT * FROM media {where_clause} ORDER BY RANDOM() LIMIT ?",
@@ -444,10 +447,22 @@ def write_indexed_folders_mirror(db_path: str, folders: list[str]) -> None:
         handle.write("\n".join(folders))
 
 
-def query_filter_for_folder(folder_path: str | None) -> dict | None:
+def query_filter_for_folder(folder_path: str | None) -> dict:
+    """Chroma query kwargs limiting results to media under `folder_path`.
+
+    Matches on the stored path (the document) rather than folder_id, so files owned
+    by an enclosing indexed folder are included.
+    """
     if not folder_path or folder_path == "All":
-        return None
-    return {"folder_id": folder_id_for_path(folder_path)}
+        return {}
+    pattern = "^" + re.escape(canonical_path(folder_path).rstrip(os.sep) + os.sep)
+    if os.name == "nt":
+        # Case-insensitive like path_key; Chroma ignores (?i), so use [aA]-style classes.
+        pattern = "".join(
+            f"[{ch.lower()}{ch.upper()}]" if ch.lower() != ch.upper() else ch
+            for ch in pattern
+        )
+    return {"where_document": {"$regex": pattern}}
 
 
 def path_and_caption_from_result(

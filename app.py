@@ -1039,7 +1039,7 @@ def search(
         )
         return []
 
-    where_clause = query_filter_for_folder(active_folder)
+    folder_filter = query_filter_for_folder(active_folder)
 
     # Process Text Query (if provided)
     if text_query_present:
@@ -1103,8 +1103,7 @@ def search(
                     "metadatas",
                 ],  # Distances for CLIP, embeddings for SigLIP logit calc
             }
-            if where_clause:
-                query_kwargs["where"] = where_clause
+            query_kwargs.update(folder_filter)
 
             query_results = collection.query(**query_kwargs)
         except Exception as e:
@@ -1196,8 +1195,7 @@ def search(
                 "n_results": int(initial_n_results_ui),
                 "include": ["documents", "embeddings", "metadatas"],
             }
-            if where_clause:
-                query_kwargs["where"] = where_clause
+            query_kwargs.update(folder_filter)
 
             query_results = collection.query(**query_kwargs)
         except Exception as e:
@@ -1274,8 +1272,7 @@ def search(
                 "n_results": int(initial_n_results_ui),
                 "include": ["documents", "embeddings", "metadatas"],
             }
-            if where_clause:
-                text_query_kwargs["where"] = where_clause
+            text_query_kwargs.update(folder_filter)
 
             text_query_results = collection.query(**text_query_kwargs)
         except Exception as e:
@@ -1292,8 +1289,7 @@ def search(
                 "n_results": int(initial_n_results_ui),
                 "include": ["documents", "embeddings", "metadatas"],
             }
-            if where_clause:
-                image_query_kwargs["where"] = where_clause
+            image_query_kwargs.update(folder_filter)
 
             image_query_results = collection.query(**image_query_kwargs)
         except Exception as e:
