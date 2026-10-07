@@ -1,9 +1,13 @@
+import ctypes
 import hashlib
 import os
 import sqlite3
+import subprocess
+import sys
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
+from pathlib import PurePosixPath
 from typing import Iterable
 
 import send2trash
@@ -627,6 +631,82 @@ def get_media_file_info(
         "mtime": mtime,
         "mtime_str": mtime_str,
     }
+
+
+def _reveal_windows(path: str) -> bool:
+    # The shell API behind `explorer /select`: unlike that command (which ignored the
+    # selection when launched from here), it selects reliably and reuses an open window.
+    ole32, shell32 = ctypes.windll.ole32, ctypes.windll.shell32
+    shell32.ILCreateFromPathW.restype = ctypes.c_void_p
+    shell32.ILCreateFromPathW.argtypes = [ctypes.c_wchar_p]
+    shell32.SHOpenFolderAndSelectItems.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_uint,
+        ctypes.c_void_p,
+        ctypes.c_uint,
+    ]
+    shell32.ILFree.argtypes = [ctypes.c_void_p]
+    # Gradio runs handlers on worker threads, which need their own COM init.
+    com_initialized = ole32.CoInitializeEx(None, 2) >= 0  # COINIT_APARTMENTTHREADED
+    try:
+        pidl = shell32.ILCreateFromPathW(path)
+        if not pidl:
+            return False
+        try:
+            return shell32.SHOpenFolderAndSelectItems(pidl, 0, None, 0) == 0
+        finally:
+            shell32.ILFree(pidl)
+    finally:
+        if com_initialized:
+            ole32.CoUninitialize()
+
+
+def reveal_command(path: str, platform: str = sys.platform) -> list[str]:
+    """Command that opens the macOS/Linux file manager with `path` selected."""
+    if platform == "darwin":
+        return ["open", "-R", path]
+    # freedesktop FileManager1 (Nautilus, Dolphin, Nemo, Caja, ...).
+    return [
+        "dbus-send",
+        "--session",
+        "--print-reply",
+        "--reply-timeout=2000",
+        "--dest=org.freedesktop.FileManager1",
+        "--type=method_call",
+        "/org/freedesktop/FileManager1",
+        "org.freedesktop.FileManager1.ShowItems",
+        f"array:string:{PurePosixPath(path).as_uri()}",
+        "string:",
+    ]
+
+
+def reveal_in_file_manager(path: str) -> bool:
+    """Opens the OS file manager with `path` selected; returns False if it could not."""
+    target = canonical_path(path)
+    if not os.path.isfile(target):
+        return False
+    # Via a local so type checkers don't mark other platforms' branches unreachable.
+    platform = sys.platform
+    if platform == "win32":
+        return _reveal_windows(target)
+    command = reveal_command(target)
+    if platform == "darwin":
+        try:
+            subprocess.Popen(command)
+            return True
+        except OSError:
+            return False
+    try:
+        if subprocess.run(command, capture_output=True, timeout=5).returncode == 0:
+            return True
+    except (OSError, subprocess.SubprocessError):
+        pass
+    # No FileManager1 service: open the containing folder without selecting the file.
+    try:
+        subprocess.Popen(["xdg-open", os.path.dirname(target)])
+        return True
+    except OSError:
+        return False
 
 
 def trash_and_delete_indexed_media(

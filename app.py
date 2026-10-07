@@ -23,6 +23,7 @@ if sys.platform == "win32":
 
     _ProactorBasePipeTransport._call_connection_lost = _safe_connection_lost
 
+import functools
 import html
 import os
 import time
@@ -50,6 +51,7 @@ from index_store import (
     path_and_caption_from_result,
     query_filter_for_folder,
     relative_caption,
+    reveal_in_file_manager,
     trash_and_delete_indexed_media,
 )
 from model_utils import load_model_and_processor
@@ -1488,6 +1490,42 @@ def get_allowed_gallery_paths() -> list[str]:
     return paths
 
 
+def also_store_gallery(fn, index: int = 0):
+    """Repeats fn's gallery output (at `index`) as an extra output for gallery_items_state.
+
+    The Gallery component only holds Gradio cache copies, so the original
+    (path, caption) items are kept server-side for Show in Folder and trashing.
+    """
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        result = fn(*args, **kwargs)
+        if isinstance(result, tuple):
+            return (*result, result[index])
+        return result, result
+
+    return wrapper
+
+
+def handle_gallery_select(gallery_items: list, evt: gr.SelectData):
+    """Remembers the selected result's original path for the Show in Folder button."""
+    path = None
+    if gallery_items and 0 <= evt.index < len(gallery_items):
+        path = gallery_items[evt.index][0]
+    return path, gr.Button(interactive=bool(path))
+
+
+def handle_reveal(path: str | None):
+    if not path or not reveal_in_file_manager(path):
+        gr.Warning("Could not show the file in the file manager.")
+
+
+def handle_reveal_duplicate(side: int, current_idx: int, pairs: list):
+    """Reveals image A (side 1) or B (side 2) of the current duplicate pair."""
+    if pairs and 0 <= current_idx < len(pairs):
+        handle_reveal(pairs[current_idx][side])
+
+
 css_path = Path(__file__).with_name("style.css")
 
 js_credits = """
@@ -1538,6 +1576,8 @@ if __name__ == "__main__":
         chroma_client_state = gr.State(None)
 
         duplicate_pairs_state = gr.State([])
+        selected_result_path_state = gr.State(None)
+        gallery_items_state = gr.State([])
         duplicate_pair_idx_state = gr.State(0)
 
         with gr.Row():
@@ -1704,6 +1744,9 @@ if __name__ == "__main__":
                             elem_id="gallery",
                             interactive=False,
                         )
+                        reveal_result_btn = gr.Button(
+                            "Show in Folder", interactive=False, min_width=50
+                        )
 
                     with gr.Tab("Duplicate Inspector", id="tab_duplicates"):
                         with gr.Column(visible=False) as duplicate_inspector_group:
@@ -1727,6 +1770,9 @@ if __name__ == "__main__":
                                             padding=False,
                                             elem_classes=["dup-info-html"],
                                         )
+                                    reveal_a_btn = gr.Button(
+                                        "Show in Folder", min_width=50
+                                    )
                                     trash_a_btn = gr.Button(
                                         "Move to Recycle Bin",
                                         variant="stop",
@@ -1744,6 +1790,9 @@ if __name__ == "__main__":
                                             padding=False,
                                             elem_classes=["dup-info-html"],
                                         )
+                                    reveal_b_btn = gr.Button(
+                                        "Show in Folder", min_width=50
+                                    )
                                     trash_b_btn = gr.Button(
                                         "Move to Recycle Bin",
                                         variant="stop",
@@ -1768,6 +1817,7 @@ if __name__ == "__main__":
             duplicate_pairs_state,
             main_tabs,
             *inspector_outputs,
+            gallery_items_state,
         ]
         duplicate_view_reset_outputs = [
             duplicate_pairs_state,
@@ -1841,7 +1891,7 @@ if __name__ == "__main__":
             inputs=[indexed_folders_state],
             outputs=folder_dropdowns,
         ).then(
-            fn=empty_duplicate_results,
+            fn=also_store_gallery(empty_duplicate_results),
             inputs=[],
             outputs=inspector_and_gallery_outputs,
         ).then(**refresh_index_summary)
@@ -1856,7 +1906,7 @@ if __name__ == "__main__":
             inputs=[indexed_folders_state],
             outputs=folder_dropdowns,
         ).then(
-            fn=empty_duplicate_results,
+            fn=also_store_gallery(empty_duplicate_results),
             inputs=[],
             outputs=inspector_and_gallery_outputs,
         ).then(**refresh_index_summary)
@@ -1914,7 +1964,7 @@ if __name__ == "__main__":
         ).then(**refresh_index_summary)
 
         find_duplicates_button.click(
-            fn=handle_find_duplicates,
+            fn=also_store_gallery(handle_find_duplicates),
             inputs=[
                 duplicate_folder_dropdown,
                 duplicate_threshold_slider,
@@ -1936,27 +1986,55 @@ if __name__ == "__main__":
         trash_inputs = [
             duplicate_pair_idx_state,
             duplicate_pairs_state,
-            results_gallery,
+            gallery_items_state,
             active_db_path_state,
             chroma_client_state,
             indexed_folders_state,
         ]
 
         trash_a_btn.click(
-            fn=lambda idx, pairs, gal, db, client, text: handle_trash_duplicate(
-                "left", idx, pairs, gal, db, client, text
+            fn=also_store_gallery(
+                lambda idx, pairs, gal, db, client, text: handle_trash_duplicate(
+                    "left", idx, pairs, gal, db, client, text
+                )
             ),
             inputs=trash_inputs,
             outputs=inspector_and_gallery_outputs,
         ).then(**refresh_index_summary)
 
         trash_b_btn.click(
-            fn=lambda idx, pairs, gal, db, client, text: handle_trash_duplicate(
-                "right", idx, pairs, gal, db, client, text
+            fn=also_store_gallery(
+                lambda idx, pairs, gal, db, client, text: handle_trash_duplicate(
+                    "right", idx, pairs, gal, db, client, text
+                )
             ),
             inputs=trash_inputs,
             outputs=inspector_and_gallery_outputs,
         ).then(**refresh_index_summary)
+
+        results_gallery.select(
+            fn=handle_gallery_select,
+            inputs=[gallery_items_state],
+            outputs=[selected_result_path_state, reveal_result_btn],
+        )
+        results_gallery.change(
+            fn=lambda: (None, gr.Button(interactive=False)),
+            inputs=None,
+            outputs=[selected_result_path_state, reveal_result_btn],
+        )
+        reveal_result_btn.click(
+            fn=handle_reveal, inputs=[selected_result_path_state], outputs=None
+        )
+        reveal_a_btn.click(
+            fn=lambda idx, pairs: handle_reveal_duplicate(1, idx, pairs),
+            inputs=[duplicate_pair_idx_state, duplicate_pairs_state],
+            outputs=None,
+        )
+        reveal_b_btn.click(
+            fn=lambda idx, pairs: handle_reveal_duplicate(2, idx, pairs),
+            inputs=[duplicate_pair_idx_state, duplicate_pairs_state],
+            outputs=None,
+        )
 
         nav_inputs = [
             duplicate_pair_idx_state,
@@ -2001,9 +2079,9 @@ if __name__ == "__main__":
             inputs=[],
             outputs=duplicate_view_reset_outputs,
         ).then(
-            fn=search,
+            fn=also_store_gallery(search),
             inputs=search_inputs,
-            outputs=[results_gallery],
+            outputs=[results_gallery, gallery_items_state],
         )
 
         search_button.click(
@@ -2011,9 +2089,9 @@ if __name__ == "__main__":
             inputs=[],
             outputs=duplicate_view_reset_outputs,
         ).then(
-            fn=search,
+            fn=also_store_gallery(search),
             inputs=search_inputs,
-            outputs=[results_gallery],
+            outputs=[results_gallery, gallery_items_state],
         )
 
         random_search_inputs = [
@@ -2027,13 +2105,13 @@ if __name__ == "__main__":
             inputs=[],
             outputs=duplicate_view_reset_outputs,
         ).then(
-            fn=random_search,
+            fn=also_store_gallery(random_search),
             inputs=random_search_inputs,
-            outputs=[results_gallery],
+            outputs=[results_gallery, gallery_items_state],
         )
 
         clear_button.click(
-            fn=clear_search_and_gallery,
+            fn=also_store_gallery(clear_search_and_gallery, index=2),
             inputs=[],
             outputs=[
                 query_textbox,
@@ -2042,6 +2120,7 @@ if __name__ == "__main__":
                 duplicate_pairs_state,
                 main_tabs,
                 *inspector_outputs,
+                gallery_items_state,
             ],
         )
 
