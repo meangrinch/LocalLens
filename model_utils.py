@@ -5,7 +5,7 @@ import cv2
 import numpy as np
 import torch
 import torch.nn.functional as F
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageOps, UnidentifiedImageError
 from transformers import AutoModel, AutoProcessor
 
 VIDEO_EXTENSIONS_UTILS = [".mp4", ".mov", ".avi", ".mkv", ".webm"]
@@ -91,7 +91,8 @@ def _load_and_convert_image(
         if ext in VIDEO_EXTENSIONS_UTILS:
             img = _extract_video_frame(path)
         else:
-            img = Image.open(path).convert("RGB")
+            with Image.open(path) as src:
+                img = ImageOps.exif_transpose(src).convert("RGB")
 
         return img, path, None
     except (FileNotFoundError, UnidentifiedImageError, IOError, Exception) as e:
