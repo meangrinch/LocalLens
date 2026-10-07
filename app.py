@@ -318,7 +318,9 @@ def load_and_switch_model_db(
         )
     except Exception as e:
         print(f"Error loading model/DB: {e}")
-        gr.Error(f"Error loading model/DB for {selected_model_path}: {e}")
+        gr.Warning(
+            f"Error loading model/DB for {selected_model_path}: {e}", title="Error"
+        )
         current_indexed_folders_on_error = read_indexed_folders(new_db_path)
         yield (
             selected_model_path,
@@ -433,8 +435,9 @@ def handle_update_sync_button_click(
 
     except Exception as e:
         print(f"Error updating DB directly: {e}")
-        gr.Error(
-            f"An unexpected error occurred while trying to update DB '{current_db_path}': {e}"
+        gr.Warning(
+            f"An unexpected error occurred while trying to update DB '{current_db_path}': {e}",
+            title="Error",
         )
         progress(1, desc="Error.")
 
@@ -492,7 +495,10 @@ def handle_add_folder_button_click(
 
     except Exception as e:
         print(f"Error adding folder: {e}")
-        gr.Error(f"Failed to add folder '{os.path.basename(new_folder_stripped)}': {e}")
+        gr.Warning(
+            f"Failed to add folder '{os.path.basename(new_folder_stripped)}': {e}",
+            title="Error",
+        )
         progress(1, desc="Error adding folder.")
 
     current_indexed_folders = read_indexed_folders(current_db_path)
@@ -540,8 +546,9 @@ def handle_delete_folder_button_click(
 
     except Exception as e:
         print(f"Error deleting folder: {e}")
-        gr.Error(
-            f"Failed to delete folder '{os.path.basename(folder_to_delete_stripped)}': {e}"
+        gr.Warning(
+            f"Failed to delete folder '{os.path.basename(folder_to_delete_stripped)}': {e}",
+            title="Error",
         )
         progress(1, desc="Error.")
 
@@ -977,7 +984,7 @@ def handle_find_duplicates(
 
     except Exception as e:
         print(f"Error finding duplicates: {e}")
-        gr.Error(f"Failed to find duplicates: {e}")
+        gr.Warning(f"Failed to find duplicates: {e}", title="Error")
         progress(1, desc="Error.")
         end_time = time.time()
         print(f"Search completed in {(end_time - start_time):.2f}s")
@@ -1462,7 +1469,7 @@ def random_search(
 
     except Exception as e:
         print(f"Error in random search: {e}")
-        gr.Error(f"Failed to retrieve random images: {e}")
+        gr.Warning(f"Failed to retrieve random images: {e}", title="Error")
         return []
 
 
