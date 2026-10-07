@@ -12,11 +12,11 @@ from model_utils import N_FRAMES, decode_frames, embed_prepared_batch
 RED, GREEN, BLUE = (0, 0, 255), (0, 255, 0), (255, 0, 0)  # BGR for OpenCV
 
 
-def write_video(path, colors, frames_per_color=8):
-    writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), 10, (32, 32))
+def write_video(path, colors, frames_per_color=8, size=(32, 32)):
+    writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), 10, size)
     for color in colors:
         for _ in range(frames_per_color):
-            writer.write(np.full((32, 32, 3), color, np.uint8))
+            writer.write(np.full((size[1], size[0], 3), color, np.uint8))
     writer.release()
     return str(path)
 
@@ -50,10 +50,21 @@ def test_gif_frame_counts(tmp_path):
     assert len(decode_frames(four)) == 4
 
 
-def test_still_image_is_one_frame(tmp_path):
-    path = tmp_path / "a.jpg"
-    Image.new("RGB", (16, 16), "red").save(path)
-    assert len(decode_frames(str(path))) == 1
+def test_truncated_gif_keeps_frames_that_decoded(tmp_path):
+    path = write_gif(tmp_path / "t.gif", ["red", "green", "blue", "white"] * 2)
+    data = open(path, "rb").read()
+    with open(path, "wb") as handle:
+        handle.write(data[: len(data) * 3 // 4])
+    assert 1 <= len(decode_frames(path)) < N_FRAMES
+
+
+def test_sampled_frames_are_downscaled_to_draft_size(tmp_path):
+    video = write_video(tmp_path / "v.mp4", [RED, GREEN], size=(64, 32))
+    gif = tmp_path / "g.gif"
+    frames = [Image.new("RGB", (64, 32), c) for c in ("red", "green")]
+    frames[0].save(gif, save_all=True, append_images=frames[1:])
+    assert {f.size for f in decode_frames(video, draft_size=16)} == {(32, 16)}
+    assert {f.size for f in decode_frames(str(gif), draft_size=16)} == {(32, 16)}
 
 
 class _CaptureProxy:

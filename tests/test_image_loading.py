@@ -32,3 +32,16 @@ def test_draft_size_is_twice_model_input():
     assert _draft_size(Proc({"height": 512, "width": 512})) == 1024
     assert _draft_size(Proc({"shortest_edge": 224})) == 448
     assert _draft_size(Proc({"max_num_patches": 256})) is None
+
+
+def test_mpo_photo_decodes_as_one_oriented_frame(tmp_path):
+    # Ultra HDR and many camera JPEGs embed a second image, which Pillow opens as MPO.
+    path = str(tmp_path / "photo.jpg")
+    exif = Image.Exif()
+    exif[0x0112] = 6
+    preview = Image.new("RGB", (100, 50), "blue")
+    Image.new("RGB", (400, 200), "red").save(
+        path, "MPO", save_all=True, append_images=[preview], exif=exif
+    )
+
+    assert [f.size for f in decode_frames(path)] == [(200, 400)]

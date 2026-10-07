@@ -19,6 +19,7 @@ JPEG_DRAFT_MARGIN = 2
 VRAM_BUDGET_FRACTION = 0.7
 # Evenly spaced frames sampled from each video or animated image.
 N_FRAMES = 8
+ANIMATED_FORMATS = {"GIF", "PNG", "WEBP"}
 
 _LOADER_MAX_WORKERS = max(1, (os.cpu_count() or 8) // 2)
 _loader_executor: ThreadPoolExecutor | None = None
@@ -121,22 +122,48 @@ def _draft_size(processor) -> int | None:
     return edge * JPEG_DRAFT_MARGIN if edge else None
 
 
+def _shrink(image: Image.Image, min_edge: int | None) -> Image.Image:
+    """Downscales so the shorter side is min_edge, like JPEG drafting does for stills.
+
+    Every sampled frame of a batch, and of the prefetched next batch, stays in memory
+    until preprocessing, so full-resolution 4K frames would take gigabytes.
+    """
+    if not min_edge or min(image.size) <= min_edge:
+        return image
+    scale = min_edge / min(image.size)
+    size = (round(image.width * scale), round(image.height * scale))
+    return image.resize(size, Image.Resampling.BICUBIC, reducing_gap=2.0)
+
+
+def _read_animation_frames(src: Image.Image) -> list[Image.Image]:
+    """Samples animation frames, keeping those decoded before any truncation."""
+    frames = []
+    try:
+        for index in _sample_indices(src.n_frames):
+            src.seek(index)
+            frames.append(src.convert("RGB"))
+    except (OSError, EOFError, IndexError):
+        if not frames:
+            raise
+    return frames
+
+
 def decode_frames(path: str, draft_size: int | None = None) -> list[Image.Image]:
     """RGB frames for a media file: one for still images, up to N_FRAMES otherwise."""
     if os.path.splitext(path)[1].lower() in VIDEO_EXTENSIONS_UTILS:
-        return _extract_video_frames(path)
-    with Image.open(path) as src:
-        frame_count = getattr(src, "n_frames", 1)
-        if frame_count > 1:
-            frames = []
-            for index in _sample_indices(frame_count):
-                src.seek(index)
-                frames.append(src.convert("RGB"))
-            return frames
-        if draft_size:
-            # libjpeg DCT scaling (JPEG only): skips most decode work on large photos.
-            src.draft("RGB", (draft_size, draft_size))
-        return [ImageOps.exif_transpose(src).convert("RGB")]
+        frames = _extract_video_frames(path)
+    else:
+        with Image.open(path) as src:
+            # Not just is_animated: camera JPEGs open as MPO with an embedded preview
+            # or HDR gain map as their second frame.
+            if src.format in ANIMATED_FORMATS and getattr(src, "is_animated", False):
+                frames = _read_animation_frames(src)
+            else:
+                if draft_size:
+                    # libjpeg DCT scaling (JPEG only): skips most decode work on large photos.
+                    src.draft("RGB", (draft_size, draft_size))
+                return [ImageOps.exif_transpose(src).convert("RGB")]
+    return [_shrink(frame, draft_size) for frame in frames]
 
 
 def _load_and_convert_image(
