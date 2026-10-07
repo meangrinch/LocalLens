@@ -1721,6 +1721,7 @@ if __name__ == "__main__":
                         results_gallery = gr.Gallery(
                             label="Search Results",
                             columns=3,
+                            fit_columns=False,
                             show_label=False,
                             elem_id="gallery",
                             interactive=False,
@@ -1746,6 +1747,7 @@ if __name__ == "__main__":
                                             interactive=False,
                                             type="filepath",
                                             show_label=True,
+                                            elem_classes=["dup-preview"],
                                         )
                                         img_a_info_html = gr.HTML(
                                             padding=False,
@@ -1766,6 +1768,7 @@ if __name__ == "__main__":
                                             interactive=False,
                                             type="filepath",
                                             show_label=True,
+                                            elem_classes=["dup-preview"],
                                         )
                                         img_b_info_html = gr.HTML(
                                             padding=False,

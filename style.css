@@ -91,3 +91,9 @@
     font-size: 11px;
     opacity: 0.8;
 }
+
+/* Gradio 6's Group resets child borders to medium width, which the Image's
+   inline solid border-style then makes visible. */
+.dup-preview {
+    border-width: 0 !important;
+}
