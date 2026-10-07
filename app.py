@@ -1955,6 +1955,8 @@ if __name__ == "__main__":
             ],
             outputs=[],
             show_progress="full",
+            # Progress needs a component to draw on and this event has no outputs.
+            show_progress_on=[index_summary],
         ).then(**refresh_index_summary)
 
         def handle_add_folder_with_dropdown_update(*args):
