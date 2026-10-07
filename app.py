@@ -196,7 +196,7 @@ def load_and_switch_model_db(
         None,
         None,
         None,
-        gr.Textbox(value="Loading model...", interactive=False),
+        "",
         None,
         None,
         None,
@@ -215,7 +215,7 @@ def load_and_switch_model_db(
             None,
             None,
             None,
-            "No model selected.",
+            "",
             FALLBACK_SIGLIP_THRESHOLD,
             FALLBACK_CLIP_THRESHOLD,
             FALLBACK_COMBINED_THRESHOLD,
@@ -543,6 +543,17 @@ def handle_delete_folder_button_click(
 
     current_indexed_folders = read_indexed_folders(current_db_path)
     return "\n".join(current_indexed_folders)
+
+
+def render_index_summary(db_path: str | None):
+    """Per-folder and total indexed item counts for the Database Management table."""
+    if not db_path:
+        return gr.Dataframe(value=[], label="Indexed Folders")
+    counts, total = IndexStore(db_path).folder_item_counts()
+    return gr.Dataframe(
+        value=[[folder, f"{count:,}"] for folder, count in counts],
+        label=f"Indexed Folders ({total:,} items total)",
+    )
 
 
 def parse_indexed_folders_text(indexed_folders_text: str) -> list[str]:
@@ -1548,8 +1559,14 @@ if __name__ == "__main__":
                         value="All",
                         info="Limit searches to a specific indexed folder.",
                     )
-                    indexed_folders_display = gr.Textbox(
-                        label="Indexed Folders", interactive=False, lines=3, max_lines=5
+                    # Newline-separated folder paths; parsed by handlers as the folder list.
+                    indexed_folders_state = gr.State("")
+                    index_summary = gr.Dataframe(
+                        headers=["Folder", "Items"],
+                        label="Indexed Folders",
+                        interactive=False,
+                        wrap=True,
+                        column_widths=["75%", "25%"],
                     )
                     update_db_button = gr.Button(
                         "Update/Sync Full DB", variant="primary"
@@ -1749,7 +1766,7 @@ if __name__ == "__main__":
             logit_scale_state,
             logit_bias_state,
             chroma_client_state,
-            indexed_folders_display,
+            indexed_folders_state,
             siglip_thresh_slider,
             clip_thresh_slider,
             combined_cosine_thresh_slider,
@@ -1783,6 +1800,12 @@ if __name__ == "__main__":
             delete_folder_dropdown,
         ]
 
+        refresh_index_summary = dict(
+            fn=render_index_summary,
+            inputs=[active_db_path_state],
+            outputs=[index_summary],
+        )
+
         app.load(
             fn=load_and_switch_model_db,
             inputs=[active_model_path_state],
@@ -1790,13 +1813,13 @@ if __name__ == "__main__":
             show_progress="full",
         ).then(
             fn=update_all_folder_dropdowns,
-            inputs=[indexed_folders_display],
+            inputs=[indexed_folders_state],
             outputs=folder_dropdowns,
         ).then(
             fn=empty_duplicate_results,
             inputs=[],
             outputs=inspector_and_gallery_outputs,
-        )
+        ).then(**refresh_index_summary)
 
         model_dropdown.change(
             fn=load_and_switch_model_db,
@@ -1805,13 +1828,13 @@ if __name__ == "__main__":
             show_progress="full",
         ).then(
             fn=update_all_folder_dropdowns,
-            inputs=[indexed_folders_display],
+            inputs=[indexed_folders_state],
             outputs=folder_dropdowns,
         ).then(
             fn=empty_duplicate_results,
             inputs=[],
             outputs=inspector_and_gallery_outputs,
-        )
+        ).then(**refresh_index_summary)
 
         update_db_button.click(
             fn=handle_update_sync_button_click,
@@ -1826,7 +1849,7 @@ if __name__ == "__main__":
             ],
             outputs=[],
             show_progress="full",
-        )
+        ).then(**refresh_index_summary)
 
         def handle_add_folder_with_dropdown_update(*args):
             """Wrapper to update indexed folders display and all folder dropdowns."""
@@ -1854,16 +1877,16 @@ if __name__ == "__main__":
                 chroma_client_state,
                 batch_size_slider,
             ],
-            outputs=[indexed_folders_display, *folder_dropdowns],
+            outputs=[indexed_folders_state, *folder_dropdowns],
             show_progress="full",
-        )
+        ).then(**refresh_index_summary)
 
         delete_folder_button.click(
             fn=handle_delete_folder_with_dropdown_update,
             inputs=[delete_folder_dropdown, active_db_path_state, chroma_client_state],
-            outputs=[indexed_folders_display, *folder_dropdowns],
+            outputs=[indexed_folders_state, *folder_dropdowns],
             show_progress="full",
-        )
+        ).then(**refresh_index_summary)
 
         find_duplicates_button.click(
             fn=handle_find_duplicates,
@@ -1879,11 +1902,11 @@ if __name__ == "__main__":
                 batch_size_slider,
                 verbose_checkbox,
                 initial_n_results_slider,
-                indexed_folders_display,
+                indexed_folders_state,
             ],
             outputs=inspector_and_gallery_outputs,
             show_progress="full",
-        )
+        ).then(**refresh_index_summary)
 
         trash_inputs = [
             duplicate_pair_idx_state,
@@ -1891,7 +1914,7 @@ if __name__ == "__main__":
             results_gallery,
             active_db_path_state,
             chroma_client_state,
-            indexed_folders_display,
+            indexed_folders_state,
         ]
 
         trash_a_btn.click(
@@ -1900,7 +1923,7 @@ if __name__ == "__main__":
             ),
             inputs=trash_inputs,
             outputs=inspector_and_gallery_outputs,
-        )
+        ).then(**refresh_index_summary)
 
         trash_b_btn.click(
             fn=lambda idx, pairs, gal, db, client, text: handle_trash_duplicate(
@@ -1908,12 +1931,12 @@ if __name__ == "__main__":
             ),
             inputs=trash_inputs,
             outputs=inspector_and_gallery_outputs,
-        )
+        ).then(**refresh_index_summary)
 
         nav_inputs = [
             duplicate_pair_idx_state,
             duplicate_pairs_state,
-            indexed_folders_display,
+            indexed_folders_state,
         ]
 
         prev_pair_btn.click(

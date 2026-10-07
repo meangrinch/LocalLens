@@ -242,6 +242,24 @@ class IndexStore:
             rows = conn.execute("SELECT path FROM folders ORDER BY path").fetchall()
             return [row["path"] for row in rows]
 
+    def folder_item_counts(self) -> tuple[list[tuple[str, int]], int]:
+        """Returns ([(folder, items under it)], distinct items in the index)."""
+        with self.connect() as conn:
+            folders = conn.execute(
+                "SELECT path, path_key FROM folders ORDER BY path"
+            ).fetchall()
+            counts = []
+            for row in folders:
+                # Count by path prefix so nested indexed folders include files owned by a parent.
+                prefix = row["path_key"].rstrip(os.sep) + os.sep
+                count = conn.execute(
+                    "SELECT COUNT(*) FROM media WHERE substr(path_key, 1, ?) = ?",
+                    (len(prefix), prefix),
+                ).fetchone()[0]
+                counts.append((row["path"], count))
+            total = conn.execute("SELECT COUNT(*) FROM media").fetchone()[0]
+        return counts, total
+
     def get_folder_id(self, folder_path: str) -> str | None:
         key = path_key(folder_path)
         with self.connect() as conn:
