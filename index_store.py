@@ -825,7 +825,7 @@ def reveal_command(path: str, platform: str = sys.platform) -> list[str]:
         "dbus-send",
         "--session",
         "--print-reply",
-        "--reply-timeout=2000",
+        "--reply-timeout=10000",
         "--dest=org.freedesktop.FileManager1",
         "--type=method_call",
         "/org/freedesktop/FileManager1",
@@ -840,25 +840,29 @@ def reveal_in_file_manager(path: str) -> bool:
     target = canonical_path(path)
     if not os.path.isfile(target):
         return False
-    # Via a local so type checkers don't mark other platforms' branches unreachable.
-    platform = sys.platform
-    if platform == "win32":
+    if sys.platform == "win32":
         return _reveal_windows(target)
     command = reveal_command(target)
-    if platform == "darwin":
+    if sys.platform == "darwin":
         try:
             subprocess.Popen(command)
             return True
         except OSError:
             return False
     try:
-        if subprocess.run(command, capture_output=True, timeout=5).returncode == 0:
+        result = subprocess.run(command, capture_output=True, timeout=15)
+        # NoReply: a cold-started file manager missed the reply timeout but still
+        # handles the call, so opening the folder too would show two windows.
+        if result.returncode == 0 or b"NoReply" in result.stderr:
             return True
     except (OSError, subprocess.SubprocessError):
         pass
     # No FileManager1 service: open the containing folder without selecting the file.
     try:
-        subprocess.Popen(["xdg-open", os.path.dirname(target)])
+        opener = subprocess.Popen(["xdg-open", os.path.dirname(target)])
+        return opener.wait(timeout=5) == 0
+    except subprocess.TimeoutExpired:
+        # Some openers stay in the foreground while the file manager runs.
         return True
     except OSError:
         return False
