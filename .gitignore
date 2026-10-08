@@ -1,23 +1,32 @@
 # Python
 __pycache__/
-.ruff_cache/
-.pytest_cache/
+*.egg-info/
+/build/
+/dist/
 
-# Virtual Environments
+# Environments
 /venv/
 /.venv/
+.env
+
+# Tool caches
+/.pytest_cache/
+/.ruff_cache/
+/.mypy_cache/
+
+# Editors and OS
+/.vscode/
+/.idea/
+.DS_Store
+Thumbs.db
+
+# Local launchers
+start-webui.bat
+start-webui.sh
 
 # App data
 /img_db/
 
-# Local launchers
-start-webui.bat
-
-# Editors & OS
-.vscode/
-.DS_Store
-Thumbs.db
-
-# Logs & scratch
+# Logs and scratch
+/.scratch/
 *.log
-.scratch/
