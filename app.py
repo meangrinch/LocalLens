@@ -1578,8 +1578,7 @@ def with_duplicate_gallery(fn):
 
 def handle_gallery_select(evt: gr.SelectData):
     """Remembers the selected result's path for the Show in Folder button."""
-    item = evt.value or {}
-    path = (item.get("image") or item.get("video") or {}).get("path")
+    path = (evt.value.get("image") or evt.value["video"])["path"]
     return path, gr.Button(visible=bool(path))
 
 
