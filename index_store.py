@@ -194,6 +194,27 @@ def delete_media_embeddings(collection, media_ids: list[str]) -> None:
         collection.delete(where={"media_id": {"$in": batch}})
 
 
+def kept_frame_rows(
+    records: list[MediaRecord], embeddings: np.ndarray, frame_paths: list[str]
+) -> dict[str, list[int]]:
+    """Embedding rows of each record's distinct frames, keyed by media_id.
+
+    `frame_paths` names the source file of each row; records without rows are left out.
+    """
+    rows_by_key: dict[str, list[int]] = {}
+    for row, path in enumerate(frame_paths):
+        rows_by_key.setdefault(path_key(path), []).append(row)
+    kept = {}
+    for record in records:
+        rows = rows_by_key.get(record.path_key)
+        if rows:
+            frame_embeddings = embeddings[rows].astype(np.float32)
+            kept[record.media_id] = [
+                rows[i] for i in distinct_frame_indices(frame_embeddings)
+            ]
+    return kept
+
+
 def write_media_embeddings(
     collection,
     records: list[MediaRecord],
@@ -206,19 +227,15 @@ def write_media_embeddings(
     kept frame is stored under its media_id; several frames get `media_id:k`.
     Returns the records that had at least one embedding.
     """
-    rows_by_key: dict[str, list[int]] = {}
-    for row, path in enumerate(frame_paths):
-        rows_by_key.setdefault(path_key(path), []).append(row)
-    written = [record for record in records if record.path_key in rows_by_key]
+    kept_by_id = kept_frame_rows(records, embeddings, frame_paths)
+    written = [record for record in records if record.media_id in kept_by_id]
     if not written:
         return []
 
     delete_media_embeddings(collection, [record.media_id for record in written])
     ids, kept_rows, documents, metadatas = [], [], [], []
     for record in written:
-        rows = rows_by_key[record.path_key]
-        frame_embeddings = embeddings[rows].astype(np.float32)
-        kept = [rows[i] for i in distinct_frame_indices(frame_embeddings)]
+        kept = kept_by_id[record.media_id]
         for frame, row in enumerate(kept):
             ids.append(
                 record.media_id if len(kept) == 1 else f"{record.media_id}:{frame}"

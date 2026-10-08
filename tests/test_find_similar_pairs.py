@@ -1,11 +1,15 @@
+import chromadb
 import numpy as np
 import pytest
+from PIL import Image
 
-from find_duplicates import find_similar_pairs
+import find_duplicates
+from find_duplicates import find_duplicates_in_folder, find_similar_pairs
 
 
+@pytest.mark.parametrize("col_block_size", [2, 4, 1024])
 @pytest.mark.parametrize("threshold", [0.0, 0.9])
-def test_find_similar_pairs_matches_brute_force(threshold):
+def test_find_similar_pairs_matches_brute_force(threshold, col_block_size):
     rng = np.random.default_rng(0)
     emb = rng.normal(size=(10, 8)).astype(np.float32)
     # Near-duplicates that straddle block boundaries (block_size=3).
@@ -21,7 +25,9 @@ def test_find_similar_pairs_matches_brute_force(threshold):
         if emb[i] @ emb[j] >= threshold
     )
 
-    pairs = find_similar_pairs(emb, paths, threshold=threshold, block_size=3)
+    pairs = find_similar_pairs(
+        emb, paths, threshold, block_size=3, col_block_size=col_block_size
+    )
 
     assert sorted((a, b) for _, a, b in pairs) == expected
     sims = [s for s, _, _ in pairs]
@@ -94,3 +100,31 @@ def test_containment_matches_brute_force_when_many_files_share_a_frame():
     got = pair_scores(emb, owners, threshold=0.5)
     assert got.keys() == expected.keys()
     assert all(got[k] == pytest.approx(expected[k], abs=1e-5) for k in got)
+
+
+def test_new_files_are_compared_when_saving_their_embeddings_fails(
+    tmp_path, monkeypatch
+):
+    folder = tmp_path / "photos"
+    folder.mkdir()
+    paths = [str(folder / n) for n in ("a.png", "b.png")]
+    for path in paths:
+        Image.new("RGB", (4, 4)).save(path)
+    monkeypatch.setattr(
+        find_duplicates,
+        "compute_embeddings",
+        lambda image_paths, **_: (unit([1, 0], [1, 0]), list(image_paths)),
+    )
+
+    def fail(*_):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(find_duplicates, "write_media_embeddings", fail)
+    client = chromadb.EphemeralClient()
+    client.get_or_create_collection("images", metadata={"hnsw:space": "cosine"})
+
+    pairs = find_duplicates_in_folder(
+        str(folder), 0.9, 16, 1024, None, None, client, str(tmp_path / "db"), "cpu"
+    )
+
+    assert [(a, b) for _, a, b in pairs] == [tuple(paths)]

@@ -8,6 +8,7 @@ from index_store import (
     IndexStore,
     build_media_record,
     canonical_path,
+    kept_frame_rows,
     path_key,
     scan_media_paths,
     write_media_embeddings,
@@ -30,12 +31,7 @@ def fetch_embeddings_from_db(
         except Exception as e:
             print(f"Warning: DB get failed for batch starting at {i}: {e}")
             continue
-        embeddings = res.get("embeddings")
-        if embeddings is None:
-            continue
-        for meta, emb in zip(res.get("metadatas") or [], embeddings):
-            if emb is None or not meta:
-                continue
+        for meta, emb in zip(res["metadatas"], res["embeddings"]):
             frames.setdefault(meta["media_id"], []).append(
                 (meta.get("frame", 0), np.asarray(emb, dtype=np.float32))
             )
@@ -91,6 +87,7 @@ def find_similar_pairs(
     threshold: float,
     block_size: int = 1024,
     device: torch.device | str = "cpu",
+    col_block_size: int = 16384,
 ) -> List[Tuple[float, str, str]]:
     """Find file pairs whose frames match with a containment score >= threshold.
 
@@ -117,21 +114,24 @@ def find_similar_pairs(
     candidates = set()
     for row_start in range(0, num_frames, block_size):
         row_end = min(row_start + block_size, num_frames)
-
-        # Only compare against rows at or after this block: the lower triangle is redundant.
-        sim_block = E[row_start:row_end] @ E[row_start:].T
-        upper = torch.ones_like(sim_block, dtype=torch.bool).triu_(diagonal=1)
-        rows, cols = torch.nonzero((sim_block >= threshold) & upper, as_tuple=True)
-        file_a, file_b = row_file[row_start + rows], row_file[row_start + cols]
-        cross = file_a != file_b
-        pairs = torch.stack(
-            [torch.minimum(file_a, file_b), torch.maximum(file_a, file_b)], dim=1
-        )[cross]
-        candidates.update(map(tuple, pairs.unique(dim=0).tolist()))
+        # Only columns at or after this block: the lower triangle is redundant. Tiling
+        # them keeps each similarity block small however large the library is.
+        for col_start in range(row_start, num_frames, col_block_size):
+            col_end = min(col_start + col_block_size, num_frames)
+            sim_block = E[row_start:row_end] @ E[col_start:col_end].T
+            rows, cols = torch.nonzero(sim_block >= threshold, as_tuple=True)
+            rows, cols = rows + row_start, cols + col_start
+            upper = cols > rows
+            file_a, file_b = row_file[rows[upper]], row_file[cols[upper]]
+            cross = file_a != file_b
+            pairs = torch.stack(
+                [torch.minimum(file_a, file_b), torch.maximum(file_a, file_b)], dim=1
+            )[cross]
+            candidates.update(map(tuple, pairs.unique(dim=0).tolist()))
 
     # Rescore on CPU: these matrices are at most N_FRAMES square, and a GPU sync per
     # pair is ~100x slower when many files share a frame (fades, title cards).
-    # ponytail: still quadratic in files sharing a frame; score candidates in padded
+    # TODO: still quadratic in files sharing a frame; score candidates in padded
     # batches if libraries with thousands of such videos get slow.
     frames_np = E.cpu().numpy()
     frames_of = {f: frames_np[rows] for f, rows in rows_of.items()}
@@ -229,6 +229,10 @@ def find_duplicates_in_folders(
             batch_size=batch_size,
         )
         if miss_embeddings.size > 0 and len(miss_processed) > 0:
+            kept = kept_frame_rows(missing_records, miss_embeddings, miss_processed)
+            frames_by_id.update(
+                {media_id: miss_embeddings[rows] for media_id, rows in kept.items()}
+            )
             try:
                 miss_records = write_media_embeddings(
                     collection, missing_records, miss_embeddings, miss_processed
@@ -236,12 +240,6 @@ def find_duplicates_in_folders(
                 store.upsert_media_records(miss_records)
             except Exception as e:
                 print(f"Warning: failed to upsert embeddings: {e}")
-            # Read back so new files use the same pruned frames as indexed ones.
-            frames_by_id.update(
-                fetch_embeddings_from_db(
-                    collection, [record.media_id for record in missing_records]
-                )
-            )
 
     # One row per frame, in directory order for deterministic output.
     present = [r for r in records if r.media_id in frames_by_id]
