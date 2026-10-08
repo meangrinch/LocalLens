@@ -17,7 +17,7 @@ JPEG_DRAFT_MARGIN = 2
 # Share of free VRAM indexing batches may use; the rest absorbs fragmentation, text
 # embedding during searches, and other GPU apps.
 VRAM_BUDGET_FRACTION = 0.7
-# Evenly spaced frames sampled from each video or animated image.
+# Most frames sampled, evenly spaced, from each video or animated image.
 N_FRAMES = 8
 ANIMATED_FORMATS = {"GIF", "PNG", "WEBP"}
 
@@ -260,7 +260,7 @@ def embed_prepared_batch(
 def fit_batch_size(
     free_bytes: float, per_image_bytes: float, max_batch_size: int
 ) -> int:
-    """Largest batch (step of 4, at least 4) fitting the VRAM budget, capped at max."""
+    """Largest multiple of 4 within the VRAM budget and max_batch_size, but at least 4."""
     fit = int(free_bytes * VRAM_BUDGET_FRACTION / per_image_bytes) // 4 * 4
     return max(4, min(max_batch_size, fit))
 

@@ -369,8 +369,6 @@ def load_and_switch_model_db(
 
 
 def make_index_progress_callback(progress):
-    """Maps build_db progress events onto a Gradio progress bar."""
-
     def callback(status, **kwargs):
         if status == "start_processing":
             total_images = kwargs.get("total_images_to_process", 0)
@@ -584,7 +582,6 @@ def handle_delete_folder_button_click(
 
 
 def render_index_summary(db_path: str | None):
-    """Per-folder and total indexed item counts for the Database Management panel."""
     counts, total = IndexStore(db_path).folder_item_counts() if db_path else ([], 0)
     rows = "".join(
         f"<div class='index-row'><span class='index-path'>{html.escape(folder)}</span>"
@@ -612,7 +609,6 @@ def parse_indexed_folders_text(indexed_folders_text: str) -> list[str]:
 
 
 def folder_dropdown_with_all(indexed_folders_text: str):
-    """Folder dropdown update with an 'All' option first, defaulting to 'All'."""
     folders = parse_indexed_folders_text(indexed_folders_text)
     if not folders:
         return gr.Dropdown(choices=[], value=None)
@@ -1933,7 +1929,6 @@ if __name__ == "__main__":
         ]
 
         def update_all_folder_dropdowns(indexed_folders_text: str):
-            """Update the active, duplicate, and delete folder dropdowns."""
             active_update = folder_dropdown_with_all(indexed_folders_text)
             dup_update = folder_dropdown_with_all(indexed_folders_text)
             delete_update = gr.Dropdown(

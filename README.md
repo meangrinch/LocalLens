@@ -66,7 +66,7 @@ An offline visual search engine for local image and video collections. Indexes d
 - **Indexing**: Recursive directory indexing and incremental sync (ChromaDB)
 - **Search**: Natural language text, image, and combined text + image queries
 - **Reverse Search**: Find visually similar media from an uploaded image
-- **Duplicates**: Locate duplicate and near-duplicate image pairs by similarity threshold
+- **Duplicates**: Locate duplicate and near-duplicate image and video pairs by similarity threshold
 - **Models**: Vision embedding backbones (SigLIP 2, MetaCLIP, DFN-CLIP, CLIP)
 - **Formats**: Image and video support (jpg, png, webp, mp4, mkv, etc.)
 - **Interfaces**: Web UI (Gradio) and CLI
