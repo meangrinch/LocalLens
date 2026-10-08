@@ -46,6 +46,7 @@ from find_duplicates import (
     find_duplicates_in_folders,
 )
 from index_store import (
+    DismissedPairs,
     IndexStore,
     get_media_file_info,
     is_path_under_folder,
@@ -122,6 +123,7 @@ MODEL_CONFIDENCE_DEFAULTS = {
         "image_only_thresh": 0.85,
     },
 }
+DB_ROOT = "img_db"
 # Upper bound; probe_batch_size lowers it when the model's batches won't fit in VRAM.
 DEFAULT_BATCH_SIZE = 16
 
@@ -184,7 +186,7 @@ def get_simplified_model_identifier(model_path_str: str) -> str:
 def generate_db_path_for_model(model_path_str: str) -> str:
     """Generates a database directory path like 'img_db/simplified_model_id/'."""
     simplified_id = get_simplified_model_identifier(model_path_str)
-    return os.path.join("img_db", simplified_id)
+    return os.path.join(DB_ROOT, simplified_id)
 
 
 def read_indexed_folders(db_path: str) -> list[str]:
@@ -673,6 +675,7 @@ def render_duplicate_pair_view(
             gr.Button(interactive=False),
             gr.update(value=None, visible=False),
             gr.update(value=None, visible=False),
+            gr.Button(value="Not Duplicates", interactive=False),
         )
 
     sim, path_a, path_b = pairs[current_idx]
@@ -738,6 +741,8 @@ def render_duplicate_pair_view(
 
     has_prev = current_idx > 0
     has_next = current_idx < len(pairs) - 1
+    dismissed = DismissedPairs(DB_ROOT).is_dismissed(path_a, path_b)
+    dismiss_label = "Restore Pair" if dismissed else "Not Duplicates"
     image_a, video_a = preview_updates(path_a, can_trash_a)
     image_b, video_b = preview_updates(path_b, can_trash_b)
 
@@ -755,6 +760,7 @@ def render_duplicate_pair_view(
         gr.Button(interactive=has_next),
         video_a,
         video_b,
+        gr.Button(value=dismiss_label, interactive=True),
     )
 
 
@@ -837,27 +843,70 @@ def handle_trash_duplicate(
 
     remaining_pairs = filter_resolved_pairs(pairs, target_path)
     updated_gallery = filter_gallery_items(gallery_images, target_path)
-
-    new_idx = (
-        max(0, min(len(remaining_pairs) - 1, current_idx)) if remaining_pairs else 0
+    return review_remaining_pairs(
+        updated_gallery, remaining_pairs, current_idx, indexed_folders_text
     )
-    if not remaining_pairs:
+
+
+def review_remaining_pairs(
+    gallery_images: list, pairs: list, current_idx: int, indexed_folders_text: str
+):
+    """Shows the pair now at current_idx, or returns to search once none are left."""
+    new_idx = max(0, min(len(pairs) - 1, current_idx)) if pairs else 0
+    if not pairs:
         gr.Info("All duplicate pairs have been resolved.")
         selected_tabs = gr.Tabs(selected="tab_search", elem_classes=["hide-tabs-nav"])
     else:
         selected_tabs = gr.Tabs(
             selected="tab_duplicates", elem_classes=["show-tabs-nav"]
         )
-
-    view_updates = render_duplicate_pair_view(
-        remaining_pairs, new_idx, indexed_folders_text
-    )
     return (
-        updated_gallery,
-        remaining_pairs,
+        gallery_images,
+        pairs,
         selected_tabs,
-        *view_updates,
+        *render_duplicate_pair_view(pairs, new_idx, indexed_folders_text),
     )
+
+
+def handle_toggle_dismissed(
+    current_idx: int,
+    pairs: list,
+    gallery_images: list,
+    indexed_folders_text: str,
+    show_dismissed: bool,
+    max_gallery_items: int,
+):
+    """Marks the current pair as not duplicates, or restores a dismissed one."""
+    _, path_a, path_b = pairs[current_idx]
+    store = DismissedPairs(DB_ROOT)
+    if store.is_dismissed(path_a, path_b):
+        store.restore(path_a, path_b)
+    else:
+        store.dismiss(path_a, path_b)
+        if not show_dismissed:
+            pairs = pairs[:current_idx] + pairs[current_idx + 1 :]
+            gallery_images = duplicate_gallery_items(pairs, indexed_folders_text)[
+                : int(max_gallery_items)
+            ]
+    return review_remaining_pairs(
+        gallery_images, pairs, current_idx, indexed_folders_text
+    )
+
+
+def duplicate_gallery_items(
+    pairs: list, indexed_folders_text: str
+) -> list[tuple[str, str]]:
+    """Both files of each pair, in pair order, for the results gallery."""
+    gallery_images = []
+    for _, path1, path2 in pairs:
+        for path in (path1, path2):
+            if os.path.exists(path):
+                gallery_images.append(
+                    (path, get_relative_caption(path, indexed_folders_text))
+                )
+            else:
+                print(f"Missing: {path}")
+    return gallery_images
 
 
 def empty_duplicate_results():
@@ -882,6 +931,7 @@ def handle_find_duplicates(
     verbose_ui: bool,
     initial_n_results_ui: int,
     indexed_folders_text: str,
+    show_dismissed: bool,
     progress=gr.Progress(track_tqdm=True),
 ):
     """Finds duplicate images in a folder using the active model and ChromaDB."""
@@ -959,24 +1009,18 @@ def handle_find_duplicates(
                 device=device,
             )
 
-        # Convert pairs to gallery format
-        gallery_images = []
-        for _, path1, path2 in pairs:
-            if os.path.exists(path1):
-                caption1 = get_relative_caption(path1, indexed_folders_text)
-                gallery_images.append((path1, caption1))
-            else:
-                print(f"Missing: {path1}")
+        hidden_count = 0
+        if not show_dismissed:
+            shown_pairs = DismissedPairs(DB_ROOT).undismissed(pairs)
+            hidden_count = len(pairs) - len(shown_pairs)
+            pairs = shown_pairs
 
-            if os.path.exists(path2):
-                caption2 = get_relative_caption(path2, indexed_folders_text)
-                gallery_images.append((path2, caption2))
-            else:
-                print(f"Missing: {path2}")
-
+        gallery_images = duplicate_gallery_items(pairs, indexed_folders_text)
         total_images_found = len(gallery_images)
         gallery_images = gallery_images[:initial_n_results_ui]
         images_displayed = len(gallery_images)
+        if hidden_count:
+            gr.Info(f"Hid {hidden_count} pair(s) marked as not duplicates.")
 
         if not pairs:
             gr.Info("No duplicate or near-duplicate pairs found.")
@@ -1721,6 +1765,11 @@ if __name__ == "__main__":
                         label="Similarity Threshold",
                         info="Cosine similarity threshold for reporting duplicates. Higher = more strict.",
                     )
+                    show_dismissed_checkbox = gr.Checkbox(
+                        label="Show Pairs Marked Not Duplicates",
+                        value=False,
+                        info="Include them in the next scan so they can be restored.",
+                    )
                     find_duplicates_button = gr.Button(
                         "Find Duplicates", variant="primary"
                     )
@@ -1817,6 +1866,9 @@ if __name__ == "__main__":
                                 pair_status_markdown = gr.Markdown(
                                     "Pair 0 of 0", elem_id="dup_status"
                                 )
+                                dismiss_pair_btn = gr.Button(
+                                    "Not Duplicates", min_width=50
+                                )
                                 next_pair_btn = gr.Button("Next Pair", min_width=50)
 
                             with gr.Row():
@@ -1889,6 +1941,7 @@ if __name__ == "__main__":
             next_pair_btn,
             vid_a_preview,
             vid_b_preview,
+            dismiss_pair_btn,
         ]
         inspector_and_gallery_outputs = [
             results_gallery,
@@ -2051,6 +2104,7 @@ if __name__ == "__main__":
                 verbose_checkbox,
                 initial_n_results_slider,
                 indexed_folders_state,
+                show_dismissed_checkbox,
             ],
             outputs=[*inspector_and_gallery_outputs, duplicate_gallery_state],
             show_progress="full",
@@ -2084,6 +2138,19 @@ if __name__ == "__main__":
             inputs=trash_inputs,
             outputs=[*inspector_and_gallery_outputs, duplicate_gallery_state],
         ).then(**refresh_index_summary)
+
+        dismiss_pair_btn.click(
+            fn=with_duplicate_gallery(handle_toggle_dismissed),
+            inputs=[
+                duplicate_pair_idx_state,
+                duplicate_pairs_state,
+                duplicate_gallery_state,
+                indexed_folders_state,
+                show_dismissed_checkbox,
+                initial_n_results_slider,
+            ],
+            outputs=[*inspector_and_gallery_outputs, duplicate_gallery_state],
+        )
 
         results_gallery.select(
             fn=handle_gallery_select,

@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
+import app
 from app import render_duplicate_pair_view
 from index_store import get_media_file_info
 
@@ -30,7 +31,8 @@ def make_video(path):
     return path
 
 
-def test_render_duplicate_pair_view_uses_video_player_for_videos(tmp):
+def test_render_duplicate_pair_view_uses_video_player_for_videos(tmp, monkeypatch):
+    monkeypatch.setattr(app, "DB_ROOT", os.path.join(tmp, "db"))
     video = make_video(os.path.join(tmp, "clip.mp4"))
     image = make_image(os.path.join(tmp, "still.png"))
 

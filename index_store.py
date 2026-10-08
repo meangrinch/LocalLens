@@ -18,6 +18,7 @@ from PIL import Image
 
 INDEX_SCHEMA_VERSION = "1"
 INDEX_DB_FILENAME = "index.sqlite"
+DISMISSED_PAIRS_FILENAME = "dismissed_pairs.sqlite"
 # schema_meta keys of one-time invalidations, set once they have run for an index.
 FRAME_SAMPLING_KEY = "frame_sampling"
 STILL_DECODING_KEY = "still_decoding"
@@ -546,6 +547,93 @@ class IndexStore:
                 params + [limit],
             ).fetchall()
             return [record_from_row(row) for row in rows]
+
+
+def _file_stamp(path: str) -> str:
+    """Size and mtime, so a dismissal lapses once either file changes."""
+    try:
+        stat_result = os.stat(path)
+    except OSError:
+        return ""
+    return f"{stat_result.st_size}:{stat_result.st_mtime_ns}"
+
+
+class DismissedPairs:
+    """Pairs marked as not duplicates, shared by the indexes of every model."""
+
+    def __init__(self, db_root: str):
+        os.makedirs(db_root, exist_ok=True)
+        self.sqlite_path = os.path.join(db_root, DISMISSED_PAIRS_FILENAME)
+        with self.connect() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS dismissed_pairs (
+                    key_a TEXT NOT NULL,
+                    key_b TEXT NOT NULL,
+                    stamp_a TEXT NOT NULL,
+                    stamp_b TEXT NOT NULL,
+                    dismissed_at REAL NOT NULL,
+                    PRIMARY KEY (key_a, key_b)
+                )
+                """)
+
+    @contextmanager
+    def connect(self):
+        conn = sqlite3.connect(self.sqlite_path)
+        try:
+            yield conn
+            conn.commit()
+        finally:
+            conn.close()
+
+    @staticmethod
+    def _ordered(path_a: str, path_b: str) -> tuple[str, str]:
+        return (
+            (path_a, path_b)
+            if path_key(path_a) <= path_key(path_b)
+            else (path_b, path_a)
+        )
+
+    def dismiss(self, path_a: str, path_b: str) -> None:
+        first, second = self._ordered(path_a, path_b)
+        with self.connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO dismissed_pairs VALUES (?, ?, ?, ?, ?)",
+                (
+                    path_key(first),
+                    path_key(second),
+                    _file_stamp(first),
+                    _file_stamp(second),
+                    time.time(),
+                ),
+            )
+
+    def restore(self, path_a: str, path_b: str) -> None:
+        first, second = self._ordered(path_a, path_b)
+        with self.connect() as conn:
+            conn.execute(
+                "DELETE FROM dismissed_pairs WHERE key_a = ? AND key_b = ?",
+                (path_key(first), path_key(second)),
+            )
+
+    def is_dismissed(self, path_a: str, path_b: str) -> bool:
+        return not self.undismissed([(0.0, path_a, path_b)])
+
+    def undismissed(self, pairs: list) -> list:
+        """The (score, path_a, path_b) pairs that are not currently dismissed."""
+        with self.connect() as conn:
+            stamps = {
+                (key_a, key_b): (stamp_a, stamp_b)
+                for key_a, key_b, stamp_a, stamp_b in conn.execute(
+                    "SELECT key_a, key_b, stamp_a, stamp_b FROM dismissed_pairs"
+                )
+            }
+        kept = []
+        for pair in pairs:
+            first, second = self._ordered(pair[1], pair[2])
+            stored = stamps.get((path_key(first), path_key(second)))
+            if stored is None or stored != (_file_stamp(first), _file_stamp(second)):
+                kept.append(pair)
+        return kept
 
 
 def record_from_row(row: sqlite3.Row) -> MediaRecord:
