@@ -30,6 +30,7 @@ import time
 from pathlib import Path
 
 import chromadb
+import cv2
 import gradio as gr
 import numpy as np
 import torch
@@ -127,13 +128,36 @@ DEFAULT_BATCH_SIZE = 16
 device = get_best_device()
 dtype = get_best_dtype(device)
 
-# Serve preview videos as-is: browsers decode HEVC and VP9 natively, while gr.Video
-# re-encodes anything it deems unplayable into its cache on every render. Patched on
-# the class because Gradio rebuilds components for each update.
-# ponytail: replaces a private Gradio method app-wide; if renamed, conversion returns.
-gr.Video._format_video = lambda self, path: (
-    None if path is None else FileData(path=str(path))
-)
+# OpenCV FourCC tags of codecs browsers decode in mp4/mov/webm. HEVC plays in
+# Chromium on Windows and macOS but not in Firefox.
+BROWSER_VIDEO_CODECS = {"h264", "avc1", "hevc", "hvc1", "hev1", "vp80", "vp90", "av01"}
+BROWSER_VIDEO_CONTAINERS = {".mp4", ".mov", ".webm"}
+
+
+def is_browser_playable(path: str) -> bool:
+    if os.path.splitext(path)[1].lower() not in BROWSER_VIDEO_CONTAINERS:
+        return False
+    cap = cv2.VideoCapture(path)
+    fourcc = int(cap.get(cv2.CAP_PROP_FOURCC))
+    cap.release()
+    return (
+        fourcc.to_bytes(4, "little").decode("latin-1").lower() in BROWSER_VIDEO_CODECS
+    )
+
+
+_gradio_format_video = gr.Video._format_video
+
+
+def _format_preview_video(self, path):
+    if path is not None and is_browser_playable(str(path)):
+        return FileData(path=str(path))
+    return _gradio_format_video(self, path)
+
+
+# gr.Video re-encodes HEVC and anything in .mov into its cache on every render. Patched
+# on the class because Gradio rebuilds components for each update; it replaces a
+# private method, so if Gradio renames it every such video is converted again.
+gr.Video._format_video = _format_preview_video
 
 
 def get_simplified_model_identifier(model_path_str: str) -> str:
