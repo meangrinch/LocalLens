@@ -924,10 +924,12 @@ def reveal_in_file_manager(path: str) -> bool:
     target = canonical_path(path)
     if not os.path.isfile(target):
         return False
-    if sys.platform == "win32":
+    # Via a local so type checkers analyse every platform's branch, not just the host's.
+    platform = sys.platform
+    if platform == "win32":
         return _reveal_windows(target)
     command = reveal_command(target)
-    if sys.platform == "darwin":
+    if platform == "darwin":
         try:
             subprocess.Popen(command)
             return True
