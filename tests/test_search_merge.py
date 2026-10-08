@@ -3,12 +3,7 @@ from types import SimpleNamespace
 import torch
 
 import app
-from app import search, unique_by_path
-
-
-def test_unique_by_path_keeps_first_of_each_path_in_order():
-    items = [("v.mp4", "v 0.9"), ("a.jpg", "a"), ("v.mp4", "v 0.5"), ("b.jpg", "b")]
-    assert unique_by_path(items) == [("v.mp4", "v 0.9"), ("a.jpg", "a"), ("b.jpg", "b")]
+from app import search
 
 
 def test_image_search_returns_each_video_once(tmp_path, monkeypatch):

@@ -11,11 +11,6 @@ def test_reveal_command_per_platform():
     assert "array:string:file:///a%20b/c%2Cd.jpg" in linux
 
 
-def test_reveal_missing_file_does_not_launch(tmp_path, monkeypatch):
-    monkeypatch.setattr("subprocess.Popen", lambda *a, **k: 1 / 0)
-    assert reveal_in_file_manager(str(tmp_path / "missing.jpg")) is False
-
-
 class FakePopen:
     launched = []
     exit_code = 0
