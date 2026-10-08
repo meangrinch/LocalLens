@@ -56,7 +56,7 @@ from index_store import (
     reveal_in_file_manager,
     trash_and_delete_indexed_media,
 )
-from model_utils import load_model_and_processor, probe_batch_size
+from model_utils import N_FRAMES, load_model_and_processor, probe_batch_size
 
 __version__ = "1.7.0"
 
@@ -1003,10 +1003,27 @@ def handle_find_duplicates(
         return empty_duplicate_results()
 
 
-def unique_by_path(items: list[tuple[str, str]]) -> list[tuple[str, str]]:
-    """Keeps the first (best-scoring) gallery item per file; videos match per frame."""
+def unique_by_path(items: list[tuple]) -> list[tuple]:
+    """Keeps the first (best-scoring) item per file path; videos match per frame."""
     seen = set()
     return [item for item in items if not (item[0] in seen or seen.add(item[0]))]
+
+
+def query_files(collection, n_files: int, **query_kwargs) -> dict:
+    """Single-embedding Chroma query returning the records of the n_files nearest files.
+
+    Files store up to N_FRAMES records, so fetching that many per file always reaches
+    n_files distinct files when the index has them.
+    """
+    results = collection.query(n_results=n_files * N_FRAMES, **query_kwargs)
+    documents = results["documents"][0]
+    nearest = set(list(dict.fromkeys(documents))[:n_files])
+    keep = [i for i, doc in enumerate(documents) if doc in nearest]
+    return {
+        key: [[results[key][0][i] for i in keep]]
+        for key in ("ids", "documents", "embeddings", "metadatas", "distances")
+        if results.get(key) is not None
+    }
 
 
 def caption_with_score(caption: str, score: float, show: bool) -> str:
@@ -1117,7 +1134,6 @@ def search(
                 "query_embeddings": text_emb_normalized_float32.cpu()
                 .squeeze(0)
                 .numpy(),
-                "n_results": int(initial_n_results_ui),
                 "include": [
                     "documents",
                     "embeddings",
@@ -1127,7 +1143,9 @@ def search(
             }
             query_kwargs.update(folder_filter)
 
-            query_results = collection.query(**query_kwargs)
+            query_results = query_files(
+                collection, int(initial_n_results_ui), **query_kwargs
+            )
         except Exception as e:
             print(f"ChromaDB query error (Text): {e}")
             gr.Warning(f"Error searching images: {e}")
@@ -1214,12 +1232,13 @@ def search(
                 "query_embeddings": image_emb_normalized_float32.cpu()
                 .squeeze(0)
                 .numpy(),
-                "n_results": int(initial_n_results_ui),
                 "include": ["documents", "embeddings", "metadatas"],
             }
             query_kwargs.update(folder_filter)
 
-            query_results = collection.query(**query_kwargs)
+            query_results = query_files(
+                collection, int(initial_n_results_ui), **query_kwargs
+            )
         except Exception as e:
             print(f"ChromaDB query error (Image): {e}")
             gr.Warning(f"Error searching images: {e}")
@@ -1291,12 +1310,13 @@ def search(
                 "query_embeddings": text_emb_normalized_float32.cpu()
                 .squeeze(0)
                 .numpy(),
-                "n_results": int(initial_n_results_ui),
                 "include": ["documents", "embeddings", "metadatas"],
             }
             text_query_kwargs.update(folder_filter)
 
-            text_query_results = collection.query(**text_query_kwargs)
+            text_query_results = query_files(
+                collection, int(initial_n_results_ui), **text_query_kwargs
+            )
         except Exception as e:
             print(f"ChromaDB query error (Combined - Text Leg): {e}")
             gr.Warning(f"Error in combined search (text leg): {e}")
@@ -1308,12 +1328,13 @@ def search(
                 "query_embeddings": image_emb_normalized_float32.cpu()
                 .squeeze(0)
                 .numpy(),
-                "n_results": int(initial_n_results_ui),
                 "include": ["documents", "embeddings", "metadatas"],
             }
             image_query_kwargs.update(folder_filter)
 
-            image_query_results = collection.query(**image_query_kwargs)
+            image_query_results = query_files(
+                collection, int(initial_n_results_ui), **image_query_kwargs
+            )
         except Exception as e:
             print(f"ChromaDB query error (Combined - Image Leg): {e}")
             gr.Warning(f"Error in combined search (image leg): {e}")
@@ -1390,9 +1411,9 @@ def search(
 
         final_combined_results_data.sort(key=lambda x: x[2], reverse=True)
 
-        for doc_path, caption, score, ts, Is in final_combined_results_data[
-            : int(initial_n_results_ui)
-        ]:
+        for doc_path, caption, score, ts, Is in unique_by_path(
+            final_combined_results_data
+        )[: int(initial_n_results_ui)]:
             if os.path.exists(doc_path):
                 gallery_images.append(
                     (doc_path, caption_with_score(caption, score, show_scores))
