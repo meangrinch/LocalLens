@@ -1863,12 +1863,16 @@ if __name__ == "__main__":
                         with gr.Column(visible=False) as duplicate_inspector_group:
                             with gr.Row(elem_classes=["dup-nav-row"]):
                                 prev_pair_btn = gr.Button("Previous Pair", min_width=50)
-                                pair_status_markdown = gr.Markdown(
-                                    "Pair 0 of 0", elem_id="dup_status"
-                                )
-                                dismiss_pair_btn = gr.Button(
-                                    "Not Duplicates", min_width=50
-                                )
+                                with gr.Column(elem_classes=["dup-pair-center"]):
+                                    pair_status_markdown = gr.Markdown(
+                                        "Pair 0 of 0", elem_id="dup_status"
+                                    )
+                                    dismiss_pair_btn = gr.Button(
+                                        "Not Duplicates",
+                                        size="sm",
+                                        min_width=50,
+                                        elem_id="dup_dismiss",
+                                    )
                                 next_pair_btn = gr.Button("Next Pair", min_width=50)
 
                             with gr.Row():

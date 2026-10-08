@@ -32,6 +32,17 @@
     align-items: center;
 }
 
+.dup-pair-center {
+    align-items: center;
+    gap: 6px !important;
+}
+
+/* Sized to its label rather than stretched across the centre column */
+#dup_dismiss {
+    width: auto !important;
+    flex-grow: 0 !important;
+}
+
 .dup-info-html {
     background: var(--background-fill-secondary) !important;
 }
