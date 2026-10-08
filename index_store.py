@@ -590,11 +590,7 @@ def query_filter_for_folder(folder_path: str | None) -> dict:
         return {}
     pattern = "^" + re.escape(canonical_path(folder_path).rstrip(os.sep) + os.sep)
     if os.name == "nt":
-        # Case-insensitive like path_key; Chroma ignores (?i), so use [aA]-style classes.
-        pattern = "".join(
-            f"[{ch.lower()}{ch.upper()}]" if ch.lower() != ch.upper() else ch
-            for ch in pattern
-        )
+        pattern = "(?i)" + pattern  # case-insensitive, like path_key
     return {"where_document": {"$regex": pattern}}
 
 
