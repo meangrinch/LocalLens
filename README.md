@@ -70,7 +70,7 @@ An offline visual search engine for local image and video collections. Indexes d
 - **Search**: Natural language text, image, and combined text + image queries
 - **Reverse Search**: Find visually similar media from an uploaded image
 - **Duplicates**: Locate duplicate and near-duplicate image and video pairs by similarity threshold
-- **Models**: Vision embedding backbones (SigLIP 2, MetaCLIP, DFN-CLIP, CLIP)
+- **Models**: Vision embedding backbones (SigLIP 2)
 - **Formats**: Image and video support (jpg, png, webp, mp4, mkv, etc.)
 - **Interfaces**: Web UI (Gradio) and CLI
 
@@ -106,11 +106,6 @@ LocalLens is open-source and free. If it saves you time finding photos or cleani
 
 - SigLIP 2 SO400M (384): [Google](https://huggingface.co/google/siglip2-so400m-patch14-384)
 - SigLIP 2 SO400M (512): [Google](https://huggingface.co/google/siglip2-so400m-patch16-512)
-- SigLIP 2 Giant: [Google](https://huggingface.co/google/siglip2-giant-opt-patch16-384)
-- DFN5B CLIP ViT-H-14: [Apple](https://huggingface.co/apple/DFN5B-CLIP-ViT-H-14-378)
-- MetaCLIP ViT-H-14: [Meta AI](https://huggingface.co/facebook/metaclip-h14-fullcc2.5b)
-- LAION-CLIP ViT-H-14: [LAION](https://huggingface.co/laion/CLIP-ViT-H-14-laion2B-s32B-b79K)
-- OpenAI CLIP ViT-L-14: [OpenAI](https://huggingface.co/openai/clip-vit-large-patch14)
 - SigLIP 2 Base: [Google](https://huggingface.co/google/siglip2-base-patch16-224)
 - ChromaDB: [Chroma](https://github.com/chroma-core/chroma)
 

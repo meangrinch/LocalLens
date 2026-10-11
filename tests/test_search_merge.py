@@ -29,7 +29,7 @@ def test_image_search_returns_each_video_once(tmp_path, monkeypatch):
     processor = lambda **_: SimpleNamespace(to=lambda _device: {})  # noqa: E731
 
     results = search(
-        "", object(), 50, 0.0, 0.0, 0.5, 0.5, model, processor, "siglip",
+        "", object(), 50, 0.0, 0.5, 0.5, model, processor,
         1.0, 0.0, SimpleNamespace(get_collection=lambda _: collection),
         str(tmp_path), False,
     )  # fmt: skip
@@ -68,7 +68,7 @@ def test_search_fetches_requested_number_of_files_not_frames(tmp_path, monkeypat
     client = SimpleNamespace(get_collection=lambda _: SimpleNamespace(query=query))
 
     results = search(
-        "", object(), 2, 0.0, 0.0, 0.5, 0.5, model, processor, "siglip",
+        "", object(), 2, 0.0, 0.5, 0.5, model, processor,
         1.0, 0.0, client, str(tmp_path), False,
     )  # fmt: skip
 

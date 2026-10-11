@@ -29,16 +29,6 @@ _LOADER_MAX_WORKERS = max(1, (os.cpu_count() or 8) // 2)
 _loader_executor: ThreadPoolExecutor | None = None
 
 
-def get_model_type(model_path: str) -> str:
-    """
-    Determines if the model is 'siglip' or 'clip' based on the name.
-    Used by app.py to switch threshold logic.
-    """
-    if "siglip" in model_path.lower():
-        return "siglip"
-    return "clip"
-
-
 def load_model_and_processor(
     model_path: str,
     device: torch.device | str,
@@ -46,7 +36,7 @@ def load_model_and_processor(
 ):
     """
     Loads the appropriate model and processor using Auto classes.
-    Returns: (model, processor, model_type_str)
+    Returns: (model, processor)
     """
     print(f"Loading model: {model_path}...")
 
@@ -65,11 +55,9 @@ def load_model_and_processor(
         model_path, trust_remote_code=TRUST_REMOTE_MODEL_CODE
     )
 
-    model_type = get_model_type(model_path)
-
     print(f"Model loaded: {model_path}")
 
-    return model, processor, model_type
+    return model, processor
 
 
 def _get_loader_executor() -> ThreadPoolExecutor:

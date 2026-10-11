@@ -69,11 +69,6 @@ __version__ = "1.7.0"
 AVAILABLE_MODELS = [
     "google/siglip2-so400m-patch14-384",
     "google/siglip2-so400m-patch16-512",
-    "apple/DFN5B-CLIP-ViT-H-14-378",
-    "google/siglip2-giant-opt-patch16-384",
-    "facebook/metaclip-h14-fullcc2.5b",
-    "laion/CLIP-ViT-H-14-laion2B-s32B-b79K",
-    "openai/clip-vit-large-patch14",
     "google/siglip2-base-patch16-224",
 ]
 DEFAULT_MODEL_PATH = None
@@ -81,7 +76,6 @@ DEFAULT_MODEL_PATH = None
 INITIAL_N_RESULTS = 50  # Number of results to fetch from ChromaDB before filtering
 
 FALLBACK_SIGLIP_THRESHOLD = -8.0
-FALLBACK_CLIP_THRESHOLD = 20.0
 FALLBACK_COMBINED_THRESHOLD = 0.45
 FALLBACK_IMAGE_ONLY_THRESHOLD = 0.70
 MODEL_CONFIDENCE_DEFAULTS = {
@@ -94,31 +88,6 @@ MODEL_CONFIDENCE_DEFAULTS = {
         "siglip_thresh": -8.0,
         "combined_thresh": 0.50,
         "image_only_thresh": 0.85,
-    },
-    "apple/DFN5B-CLIP-ViT-H-14-378": {
-        "clip_thresh": 3.5,
-        "combined_thresh": 0.45,
-        "image_only_thresh": 0.70,
-    },
-    "google/siglip2-giant-opt-patch16-384": {
-        "siglip_thresh": -8.0,
-        "combined_thresh": 0.50,
-        "image_only_thresh": 0.85,
-    },
-    "facebook/metaclip-h14-fullcc2.5b": {
-        "clip_thresh": 31.0,
-        "combined_thresh": 0.45,
-        "image_only_thresh": 0.70,
-    },
-    "laion/CLIP-ViT-H-14-laion2B-s32B-b79K": {
-        "clip_thresh": 24.0,
-        "combined_thresh": 0.45,
-        "image_only_thresh": 0.70,
-    },
-    "openai/clip-vit-large-patch14": {
-        "clip_thresh": 22.0,
-        "combined_thresh": 0.45,
-        "image_only_thresh": 0.70,
     },
     "google/siglip2-base-patch16-224": {
         "siglip_thresh": -8.0,
@@ -176,12 +145,7 @@ def get_simplified_model_identifier(model_path_str: str) -> str:
             return "siglip2-so400m-384"
         sub_parts = model_name_part.split("-")
         if len(sub_parts) >= 2:
-            return f"{sub_parts[0]}-{sub_parts[1]}"  # "siglip2-so400m", "siglip2-base", "siglip2-giant"
-        return model_name_part
-    elif "clip" in model_name_part:
-        sub_parts = model_name_part.split("-")
-        if len(sub_parts) >= 3:
-            return f"{sub_parts[0]}-{sub_parts[1]}-{sub_parts[2]}"  # "clip-vit-large"
+            return f"{sub_parts[0]}-{sub_parts[1]}"  # "siglip2-so400m", "siglip2-base"
         return model_name_part
     return model_name_part.replace("-", "_").replace(".", "_")
 
@@ -227,9 +191,7 @@ def load_and_switch_model_db(
         None,
         None,
         None,
-        None,
         "",
-        None,
         None,
         None,
         None,
@@ -246,10 +208,8 @@ def load_and_switch_model_db(
             None,
             None,
             None,
-            None,
             "",
             gr.Slider(value=FALLBACK_SIGLIP_THRESHOLD, visible=False),
-            gr.Slider(value=FALLBACK_CLIP_THRESHOLD, visible=False),
             FALLBACK_COMBINED_THRESHOLD,
             FALLBACK_IMAGE_ONLY_THRESHOLD,
             gr.Dropdown(interactive=True),
@@ -259,7 +219,6 @@ def load_and_switch_model_db(
 
     progress(0, desc="Starting model...")
     ui_siglip_thresh_to_set = FALLBACK_SIGLIP_THRESHOLD
-    ui_clip_thresh_to_set = FALLBACK_CLIP_THRESHOLD
     ui_combined_thresh_to_set = FALLBACK_COMBINED_THRESHOLD
     ui_image_only_thresh_to_set = FALLBACK_IMAGE_ONLY_THRESHOLD
     ui_batch_size_to_set = DEFAULT_BATCH_SIZE
@@ -279,7 +238,7 @@ def load_and_switch_model_db(
             print(f"Error creating indexed folders file: {e}")
     try:
         progress(0.3, desc="Loading model...")
-        new_model, new_processor, new_model_type = load_model_and_processor(
+        new_model, new_processor = load_model_and_processor(
             selected_model_path, device, dtype
         )
         progress(0.5, desc="Sizing batches to available memory...")
@@ -296,14 +255,9 @@ def load_and_switch_model_db(
             new_model.logit_bias.item() if hasattr(new_model, "logit_bias") else None
         )
         model_specific_conf = MODEL_CONFIDENCE_DEFAULTS.get(selected_model_path, {})
-        if new_model_type == "siglip":
-            ui_siglip_thresh_to_set = model_specific_conf.get(
-                "siglip_thresh", FALLBACK_SIGLIP_THRESHOLD
-            )
-        elif new_model_type == "clip":
-            ui_clip_thresh_to_set = model_specific_conf.get(
-                "clip_thresh", FALLBACK_CLIP_THRESHOLD
-            )
+        ui_siglip_thresh_to_set = model_specific_conf.get(
+            "siglip_thresh", FALLBACK_SIGLIP_THRESHOLD
+        )
         ui_combined_thresh_to_set = model_specific_conf.get(
             "combined_thresh", FALLBACK_COMBINED_THRESHOLD
         )
@@ -334,15 +288,11 @@ def load_and_switch_model_db(
             new_db_path,
             new_model,
             new_processor,
-            new_model_type,
             new_logit_scale_exp_val,
             new_logit_bias_val,
             new_chroma_client,
             "\n".join(current_indexed_folders),
-            gr.Slider(
-                value=ui_siglip_thresh_to_set, visible=new_model_type == "siglip"
-            ),
-            gr.Slider(value=ui_clip_thresh_to_set, visible=new_model_type == "clip"),
+            gr.Slider(value=ui_siglip_thresh_to_set, visible=True),
             ui_combined_thresh_to_set,
             ui_image_only_thresh_to_set,
             gr.Dropdown(interactive=True),
@@ -362,10 +312,8 @@ def load_and_switch_model_db(
             None,
             None,
             None,
-            None,
             "\n".join(current_indexed_folders_on_error),
             gr.Slider(value=FALLBACK_SIGLIP_THRESHOLD, visible=False),
-            gr.Slider(value=FALLBACK_CLIP_THRESHOLD, visible=False),
             FALLBACK_COMBINED_THRESHOLD,
             FALLBACK_IMAGE_ONLY_THRESHOLD,
             gr.Dropdown(interactive=True),
@@ -425,7 +373,6 @@ def handle_update_sync_button_click(
     current_db_path: str,
     active_model_state_val,
     active_processor_state_val,
-    active_model_type_state_val,
     active_chroma_client_state_val,
     batch_size_ui: int,
     progress=gr.Progress(track_tqdm=True),
@@ -437,11 +384,10 @@ def handle_update_sync_button_click(
     if (
         not active_model_state_val
         or not active_processor_state_val
-        or not active_model_type_state_val
         or not active_chroma_client_state_val
     ):
         gr.Warning(
-            "Model components (model, processor, type, or DB client) not loaded. Please re-select a model."
+            "Model components (model, processor, or DB client) not loaded. Please re-select a model."
         )
         return
 
@@ -478,7 +424,6 @@ def handle_add_folder_button_click(
     current_db_path: str,
     active_model_state_val,
     active_processor_state_val,
-    active_model_type_state_val,
     active_chroma_client_state_val,
     batch_size_ui: int,
     progress=gr.Progress(),
@@ -928,7 +873,6 @@ def handle_find_duplicates(
     current_db_path: str,
     active_model_state_val,
     active_processor_state_val,
-    active_model_type_state_val,
     active_chroma_client_state_val,
     batch_size_ui: int,
     verbose_ui: bool,
@@ -949,11 +893,10 @@ def handle_find_duplicates(
     if (
         not active_model_state_val
         or not active_processor_state_val
-        or not active_model_type_state_val
         or not active_chroma_client_state_val
     ):
         gr.Warning(
-            "Model components (model, processor, type, or DB client) not loaded. Please re-select a model."
+            "Model components (model, processor, or DB client) not loaded. Please re-select a model."
         )
         return empty_duplicate_results()
 
@@ -1103,12 +1046,10 @@ def search(
     query_image_pil,
     initial_n_results_ui: int,
     logit_thresh_ui: float,
-    clip_logit_thresh_ui: float,
     image_only_cosine_thresh_ui: float,
     combined_cosine_thresh_ui: float,
     current_model,
     current_processor,
-    current_model_type: str,
     current_logit_scale_exp_val: float,
     current_logit_bias_val: float,
     current_chroma_client,
@@ -1147,34 +1088,20 @@ def search(
     if text_query_present:
         print(f"Processing text query: '{query}'")
         with torch.no_grad():
-            text_processing_args = {
-                "text": query,
-                "return_tensors": "pt",
-                "truncation": True,
-            }
-            if current_model_type == "siglip":
+            inputs = current_processor(
                 # SigLIP2 was trained on lowercased text; cased queries can miss.
-                text_processing_args["text"] = query.lower()
-                text_processing_args["padding"] = "max_length"
-                text_processing_args["max_length"] = 64
-            else:  # For CLIP
-                text_processing_args["padding"] = True
-
-            if current_model_type != "siglip" and "max_length" in text_processing_args:
-                del text_processing_args["max_length"]
-
-            inputs = current_processor(**text_processing_args).to(device)
+                text=query.lower(),
+                return_tensors="pt",
+                truncation=True,
+                padding="max_length",
+                max_length=64,
+            ).to(device)
             text_features_from_model = current_model.get_text_features(
                 **inputs, return_dict=True
             ).pooler_output
-            text_features_float32 = text_features_from_model.to(torch.float32)
-
-            if current_model_type == "siglip" or current_model_type == "clip":
-                text_emb_normalized_float32 = F.normalize(
-                    text_features_float32, p=2, dim=-1
-                )
-            else:
-                text_emb_normalized_float32 = text_features_float32
+            text_emb_normalized_float32 = F.normalize(
+                text_features_from_model.to(torch.float32), p=2, dim=-1
+            )
 
     # Process Image Query (if provided)
     if image_query_present:
@@ -1186,14 +1113,9 @@ def search(
             query_image_features = current_model.get_image_features(
                 **inputs, return_dict=True
             ).pooler_output
-            query_image_features_float32 = query_image_features.to(torch.float32)
-
-            if current_model_type == "siglip" or current_model_type == "clip":
-                image_emb_normalized_float32 = F.normalize(
-                    query_image_features_float32, p=2, dim=-1
-                )
-            else:
-                image_emb_normalized_float32 = query_image_features_float32
+            image_emb_normalized_float32 = F.normalize(
+                query_image_features.to(torch.float32), p=2, dim=-1
+            )
 
     # --- Search Mode Logic ---
     if text_query_present and not image_query_present:
@@ -1208,7 +1130,7 @@ def search(
                     "embeddings",
                     "distances",
                     "metadatas",
-                ],  # Distances for CLIP, embeddings for SigLIP logit calc
+                ],
             }
             query_kwargs.update(folder_filter)
 
@@ -1243,23 +1165,14 @@ def search(
             batch_logit_val_for_print = torch.zeros_like(batch_cos_sim)
             passes_threshold_mask = torch.zeros_like(batch_cos_sim, dtype=torch.bool)
 
-            if current_model_type == "siglip":
-                if (
-                    current_logit_scale_exp_val is not None
-                    and current_logit_bias_val is not None
-                ):
-                    batch_logit_val_for_print = (
-                        batch_cos_sim * current_logit_scale_exp_val
-                    ) + current_logit_bias_val
-                    passes_threshold_mask = batch_logit_val_for_print > logit_thresh_ui
-            elif current_model_type == "clip":
-                if current_logit_scale_exp_val is not None:
-                    batch_logit_val_for_print = (
-                        batch_cos_sim * current_logit_scale_exp_val
-                    )
-                    passes_threshold_mask = (
-                        batch_logit_val_for_print > clip_logit_thresh_ui
-                    )
+            if (
+                current_logit_scale_exp_val is not None
+                and current_logit_bias_val is not None
+            ):
+                batch_logit_val_for_print = (
+                    batch_cos_sim * current_logit_scale_exp_val
+                ) + current_logit_bias_val
+                passes_threshold_mask = batch_logit_val_for_print > logit_thresh_ui
 
             doc_paths_all = query_results["documents"][0]
             metadatas_all = (query_results.get("metadatas") or [[]])[0] or []
@@ -1700,7 +1613,6 @@ if __name__ == "__main__":
 
         model_state = gr.State(None)
         processor_state = gr.State(None)
-        model_type_state = gr.State(None)
         logit_scale_state = gr.State(None)
         logit_bias_state = gr.State(None)
         chroma_client_state = gr.State(None)
@@ -1813,15 +1725,6 @@ if __name__ == "__main__":
                         visible=False,
                         label="Logit Confidence Threshold (SigLIP)",
                         info="SigLIP model confidence. Higher values = more confident.",
-                    )
-                    clip_thresh_slider = gr.Slider(
-                        minimum=0.0,
-                        maximum=40.0,
-                        step=0.1,
-                        value=FALLBACK_CLIP_THRESHOLD,
-                        visible=False,
-                        label="Logit Confidence Threshold (CLIP)",
-                        info="CLIP model confidence. Higher values = more confident.",
                     )
                     image_only_cosine_thresh_slider = gr.Slider(
                         minimum=0.0,
@@ -1992,13 +1895,11 @@ if __name__ == "__main__":
             active_db_path_state,
             model_state,
             processor_state,
-            model_type_state,
             logit_scale_state,
             logit_bias_state,
             chroma_client_state,
             indexed_folders_state,
             siglip_thresh_slider,
-            clip_thresh_slider,
             combined_cosine_thresh_slider,
             image_only_cosine_thresh_slider,
             model_dropdown,
@@ -2066,7 +1967,6 @@ if __name__ == "__main__":
                 active_db_path_state,
                 model_state,
                 processor_state,
-                model_type_state,
                 chroma_client_state,
                 batch_size_slider,
             ],
@@ -2099,7 +1999,6 @@ if __name__ == "__main__":
                 active_db_path_state,
                 model_state,
                 processor_state,
-                model_type_state,
                 chroma_client_state,
                 batch_size_slider,
             ],
@@ -2123,7 +2022,6 @@ if __name__ == "__main__":
                 active_db_path_state,
                 model_state,
                 processor_state,
-                model_type_state,
                 chroma_client_state,
                 batch_size_slider,
                 verbose_checkbox,
@@ -2234,12 +2132,10 @@ if __name__ == "__main__":
             query_image_input,
             initial_n_results_slider,
             siglip_thresh_slider,
-            clip_thresh_slider,
             image_only_cosine_thresh_slider,
             combined_cosine_thresh_slider,
             model_state,
             processor_state,
-            model_type_state,
             logit_scale_state,
             logit_bias_state,
             chroma_client_state,

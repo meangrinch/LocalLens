@@ -27,7 +27,6 @@ torch.set_float32_matmul_precision("high")
 
 model = None
 processor = None
-model_type = None
 client = None
 device = get_best_device()
 dtype = get_best_dtype(device)
@@ -399,10 +398,7 @@ if __name__ == "__main__":
 
     os.makedirs(args.db_path, exist_ok=True)
 
-    model, processor, model_type = load_model_and_processor(
-        args.model_path, device, dtype
-    )
-    print(f"Model loaded: {model_type.upper()}")
+    model, processor = load_model_and_processor(args.model_path, device, dtype)
 
     print(f"Initializing ChromaDB: {args.db_path}")
     client = chromadb.PersistentClient(path=args.db_path)
