@@ -6,8 +6,12 @@ import cv2
 import numpy as np
 import torch
 import torch.nn.functional as F
+from huggingface_hub import constants as hf_constants
 from PIL import Image, ImageOps, UnidentifiedImageError
 from transformers import AutoModel, AutoProcessor
+
+# Keep each model's weights in its own cache folder, so deleting that folder frees them.
+hf_constants.HF_HUB_DISABLE_SHARED_BLOBS = True
 
 VIDEO_EXTENSIONS_UTILS = [".mp4", ".mov", ".avi", ".mkv", ".webm"]
 TRUST_REMOTE_MODEL_CODE = True
