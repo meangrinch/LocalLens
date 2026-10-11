@@ -3,7 +3,10 @@
   <a href="docs/translations/zh/README.md">简体中文</a>
 </p>
 
-<h1 align="center"><b>LocalLens</b></h1>
+<h1 align="center">
+  <img src="assets/logo.png" width="128" alt="LocalLens Logo" /><br/>
+  LocalLens
+</h1>
 
 <p align="center">
   <img src="https://img.shields.io/github/v/release/meangrinch/LocalLens?label=Release&labelColor=181717&color=0877d2" />

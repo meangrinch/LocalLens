@@ -23,8 +23,10 @@ if sys.platform == "win32":
 
     _ProactorBasePipeTransport._call_connection_lost = _safe_connection_lost
 
+import base64
 import functools
 import html
+import io
 import os
 import time
 from pathlib import Path
@@ -36,6 +38,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from gradio.data_classes import FileData
+from PIL import Image
 
 from build_db import db_add_folders, db_delete_folder, db_update_indexed_folders
 from device import get_best_device, get_best_dtype
@@ -1638,6 +1641,22 @@ def handle_reveal_duplicate(side: int, current_idx: int, pairs: list):
 
 
 css_path = Path(__file__).with_name("style.css")
+logo_path = Path(__file__).with_name("assets") / "logo.png"
+favicon_path = Path(__file__).with_name("assets") / "icon-192.png"
+
+
+def get_app_header_html() -> str:
+    # Embed a small copy so the page doesn't pull the full 1024px logo for a 42px header icon.
+    buf = io.BytesIO()
+    Image.open(logo_path).resize((128, 128), Image.Resampling.LANCZOS).save(
+        buf, format="PNG"
+    )
+    data_uri = f"data:image/png;base64,{base64.b64encode(buf.getvalue()).decode()}"
+    return (
+        f'<div class="locallens-header"><img src="{data_uri}" alt="LocalLens logo" class="locallens-logo" />'
+        '<h1 class="locallens-title">LocalLens</h1></div>'
+    )
+
 
 js_credits = """
 function() {
@@ -1672,7 +1691,7 @@ if __name__ == "__main__":
     # cache; this also keeps gallery paths pointing at the original files.
     gr.set_static_paths(get_allowed_gallery_paths())
     with gr.Blocks(title="LocalLens") as app:
-        gr.Markdown("# LocalLens")
+        gr.HTML(get_app_header_html(), padding=False)
 
         active_model_path_state = gr.State(DEFAULT_MODEL_PATH)
         active_db_path_state = gr.State(None)
@@ -2280,7 +2299,19 @@ if __name__ == "__main__":
     app.launch(
         inbrowser=True,
         allowed_paths=get_allowed_gallery_paths(),
-        theme=gr.themes.Default(primary_hue="purple"),
+        # Gradio 6's bundled Source Sans Pro SemiBold lacks most glyphs, so load it
+        # from Google Fonts like Gradio 5 did; a bare Font stops Gradio declaring the local file.
+        theme=gr.themes.Default(
+            primary_hue="purple",
+            font=[
+                gr.themes.Font("Source Sans Pro"),
+                "ui-sans-serif",
+                "system-ui",
+                "sans-serif",
+            ],
+        ),
+        head='<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Sans+Pro:wght@400;600&display=swap">',
         js=js_credits,
         css_paths=str(css_path),
+        favicon_path=str(favicon_path),
     )
