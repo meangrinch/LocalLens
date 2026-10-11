@@ -26,6 +26,8 @@ def reveal_on_linux(tmp_path, monkeypatch, dbus_stderr, xdg_exit_code=0):
     path = tmp_path / "a.jpg"
     path.touch()
     monkeypatch.setattr(sys, "platform", "linux")
+    # A Windows host's tmp_path can't be expressed as the POSIX file URI the real one builds.
+    monkeypatch.setattr("index_store.reveal_command", lambda target: ["dbus-send"])
     monkeypatch.setattr(
         subprocess,
         "run",
