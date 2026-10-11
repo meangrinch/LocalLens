@@ -2024,8 +2024,8 @@ if __name__ == "__main__":
             outputs=inspector_and_gallery_outputs,
         ).then(**refresh_index_summary)
 
-        # .input on the soft-token dropdown: the loader's own updates must not re-trigger it.
-        for switch_event in (model_dropdown.change, soft_tokens_dropdown.input):
+        # .change, not .input: Gradio fires .input on every dropdown blur, changed or not.
+        for switch_event in (model_dropdown.change, soft_tokens_dropdown.change):
             switch_event(
                 fn=load_and_switch_model_db,
                 inputs=[model_dropdown, soft_tokens_dropdown],
