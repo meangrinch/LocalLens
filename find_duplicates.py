@@ -70,7 +70,6 @@ def compute_embeddings(
             continue
 
         if processed_paths and batch_embeds.size > 0:
-            # Ensure float32 for subsequent similarity math
             all_embeddings.append(batch_embeds.astype(np.float32, copy=False))
             all_paths.extend(processed_paths)
 
@@ -255,10 +254,8 @@ def find_duplicates_in_folders(
     embeddings = np.vstack([frames_by_id[r.media_id] for r in present])
     owners = [r.path for r in present for _ in frames_by_id[r.media_id]]
 
-    # Print processing status in search log style
     print(f"Processing {len(present)} candidates from DB (Duplicates)")
 
-    # Pairwise similarity search
     pairs = find_similar_pairs(
         embeddings,
         owners,

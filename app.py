@@ -75,7 +75,6 @@ from model_utils import (
 
 __version__ = "1.8.0"
 
-# --- Configuration ---
 AVAILABLE_MODELS = [
     "google/embeddinggemma-2",
     "google/siglip2-so400m-patch14-384",
@@ -479,7 +478,6 @@ def handle_update_sync_button_click(
     batch_size_ui: int,
     progress=gr.Progress(track_tqdm=True),
 ):
-    """Calls db_update_indexed_folders directly to update/sync the active database."""
     if not current_model_path or not current_db_path:
         gr.Warning("No active model or DB path. Please select a model first.")
         return
@@ -530,7 +528,6 @@ def handle_add_folder_button_click(
     batch_size_ui: int,
     progress=gr.Progress(),
 ):
-    """Calls db_add_folders directly to add a new folder to the active DB."""
     new_folder_stripped = new_folder_to_add.strip() if new_folder_to_add else ""
 
     if not new_folder_stripped:
@@ -588,7 +585,6 @@ def handle_delete_folder_button_click(
     active_chroma_client_state_val,
     progress=gr.Progress(track_tqdm=True),
 ):
-    """Calls db_delete_folder directly to delete a folder from the active DB."""
     folder_to_delete_stripped = folder_to_delete.strip() if folder_to_delete else ""
 
     if not folder_to_delete_stripped:
@@ -668,7 +664,6 @@ def folder_dropdown_with_all(indexed_folders_text: str):
 
 
 def filter_gallery_by_active_folder(gallery_images: list, active_folder: str) -> list:
-    """Filters gallery images to only include those under the active folder."""
     if not active_folder or active_folder == "All":
         return gallery_images
     return [
@@ -1186,7 +1181,6 @@ def search(
 
     folder_filter = query_filter_for_folder(active_folder)
 
-    # Process Text Query (if provided)
     if text_query_present:
         print(f"Processing text query: '{query}'")
         with torch.no_grad():
@@ -1197,7 +1191,6 @@ def search(
                 text_features_from_model.to(torch.float32), p=2, dim=-1
             )
 
-    # Process Image Query (if provided)
     if image_query_present:
         print("Processing image query...")
         with torch.no_grad():
@@ -1209,7 +1202,6 @@ def search(
                 query_image_features.to(torch.float32), p=2, dim=-1
             )
 
-    # --- Search Mode Logic ---
     if text_query_present and not image_query_present:
         print("Search Mode: TEXT")
         try:
@@ -1247,7 +1239,6 @@ def search(
                 np.asarray(img_embeddings_list), dtype=torch.float32
             ).to(device)
 
-            # For text, cosine similarity is between text query embedding and DB image embeddings
             batch_cos_sim = F.cosine_similarity(
                 text_emb_normalized_float32.squeeze(0),
                 all_img_embeddings_tensor,
@@ -1342,7 +1333,7 @@ def search(
             )
 
             passing_indices = torch.where(passes_threshold_mask)[0]
-            temp_results = []  # To sort before adding to gallery_images
+            temp_results = []
             for idx_tensor in passing_indices:
                 idx = idx_tensor.item()
                 metadata = metadatas_all[idx] if idx < len(metadatas_all) else None
@@ -1378,7 +1369,6 @@ def search(
     elif text_query_present and image_query_present:
         print("Search Mode: COMBINED")
 
-        # 1. Text Search Leg
         try:
             text_query_kwargs = {
                 "query_embeddings": text_emb_normalized_float32.cpu()
@@ -1396,7 +1386,6 @@ def search(
             gr.Warning(f"Error in combined search (text leg): {e}")
             return []
 
-        # 2. Image Search Leg
         try:
             image_query_kwargs = {
                 "query_embeddings": image_emb_normalized_float32.cpu()
@@ -1455,12 +1444,10 @@ def search(
 
         candidate_ids = list(candidate_data.keys())
         if candidate_ids:
-            # Batch process all candidates
             all_db_embeddings_tensor = torch.stack(
                 [candidate_data[p]["db_embedding"] for p in candidate_ids]
             )
 
-            # Batched cosine similarity
             text_sims_batch = F.cosine_similarity(
                 text_emb_normalized_float32, all_db_embeddings_tensor
             )
@@ -1468,7 +1455,6 @@ def search(
                 image_emb_normalized_float32, all_db_embeddings_tensor
             )
 
-            # Calculate combined score and filter
             combined_scores_batch = (text_sims_batch + image_sims_batch) / 2.0
             passing_mask = combined_scores_batch >= combined_cosine_thresh_ui
             passing_indices = torch.where(passing_mask)[0]
@@ -1715,7 +1701,6 @@ if __name__ == "__main__":
         duplicate_pair_idx_state = gr.State(0)
 
         with gr.Row():
-            # Left Column: Search, Model/DB Management, Parameters
             with gr.Column(scale=1):
                 gr.Markdown("### Search Query")
                 query_textbox = gr.Textbox(
@@ -1854,7 +1839,6 @@ if __name__ == "__main__":
                         info="Show detailed confidence scores and similarity metrics in console output.",
                     )
 
-            # Right Column: Tabs (Search Results & Duplicate Inspector)
             with gr.Column(scale=3):
                 with gr.Tabs(
                     selected="tab_search",
@@ -2074,14 +2058,12 @@ if __name__ == "__main__":
         ).then(**refresh_index_summary)
 
         def handle_add_folder_with_dropdown_update(*args):
-            """Wrapper to update indexed folders display and all folder dropdowns."""
             indexed_folders_result = handle_add_folder_button_click(*args)
             return indexed_folders_result, *update_all_folder_dropdowns(
                 indexed_folders_result
             )
 
         def handle_delete_folder_with_dropdown_update(*args):
-            """Wrapper to update indexed folders display and all folder dropdowns."""
             indexed_folders_result = handle_delete_folder_button_click(*args)
             return indexed_folders_result, *update_all_folder_dropdowns(
                 indexed_folders_result

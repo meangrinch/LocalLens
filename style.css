@@ -1,4 +1,3 @@
-/* App header */
 /* Gradio 6 pads gr.HTML even with padding=False */
 .html-container:has(.locallens-header) {
     padding: 0;
@@ -33,7 +32,6 @@
     max-height: 900px !important;
 }
 
-/* Hide the caption on the thumbnail grid */
 #gallery .caption-label {
     display: none !important;
 }
@@ -47,7 +45,6 @@
     gap: 0px !important;
 }
 
-/* Duplicate Inspector styles */
 #dup_status {
     display: flex;
     align-items: center;
