@@ -13,7 +13,7 @@ from index_store import (
     scan_media_paths,
     write_media_embeddings,
 )
-from model_utils import extract_features
+from model_utils import extract_features, frame_distinct_threshold
 
 
 def fetch_embeddings_from_db(
@@ -229,13 +229,20 @@ def find_duplicates_in_folders(
             batch_size=batch_size,
         )
         if miss_embeddings.size > 0 and len(miss_processed) > 0:
-            kept = kept_frame_rows(missing_records, miss_embeddings, miss_processed)
+            frame_threshold = frame_distinct_threshold(active_model)
+            kept = kept_frame_rows(
+                missing_records, miss_embeddings, miss_processed, frame_threshold
+            )
             frames_by_id.update(
                 {media_id: miss_embeddings[rows] for media_id, rows in kept.items()}
             )
             try:
                 miss_records = write_media_embeddings(
-                    collection, missing_records, miss_embeddings, miss_processed
+                    collection,
+                    missing_records,
+                    miss_embeddings,
+                    miss_processed,
+                    frame_threshold,
                 )
                 store.upsert_media_records(miss_records)
             except Exception as e:

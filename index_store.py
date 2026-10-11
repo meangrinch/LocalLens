@@ -215,7 +215,10 @@ def delete_media_embeddings(collection, media_ids: list[str]) -> None:
 
 
 def kept_frame_rows(
-    records: list[MediaRecord], embeddings: np.ndarray, frame_paths: list[str]
+    records: list[MediaRecord],
+    embeddings: np.ndarray,
+    frame_paths: list[str],
+    frame_threshold: float = FRAME_DISTINCT_THRESHOLD,
 ) -> dict[str, list[int]]:
     """Embedding rows of each record's distinct frames, keyed by media_id.
 
@@ -230,7 +233,8 @@ def kept_frame_rows(
         if rows:
             frame_embeddings = embeddings[rows].astype(np.float32)
             kept[record.media_id] = [
-                rows[i] for i in distinct_frame_indices(frame_embeddings)
+                rows[i]
+                for i in distinct_frame_indices(frame_embeddings, frame_threshold)
             ]
     return kept
 
@@ -240,6 +244,7 @@ def write_media_embeddings(
     records: list[MediaRecord],
     embeddings: np.ndarray,
     frame_paths: list[str],
+    frame_threshold: float = FRAME_DISTINCT_THRESHOLD,
 ) -> list[MediaRecord]:
     """Replaces each media file's Chroma records with its distinct frames.
 
@@ -247,7 +252,7 @@ def write_media_embeddings(
     kept frame is stored under its media_id; several frames get `media_id:k`.
     Returns the records that had at least one embedding.
     """
-    kept_by_id = kept_frame_rows(records, embeddings, frame_paths)
+    kept_by_id = kept_frame_rows(records, embeddings, frame_paths, frame_threshold)
     written = [record for record in records if record.media_id in kept_by_id]
     if not written:
         return []

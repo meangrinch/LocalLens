@@ -1,3 +1,5 @@
+from unittest.mock import MagicMock
+
 import chromadb
 import numpy as np
 import pytest
@@ -124,7 +126,15 @@ def test_new_files_are_compared_when_saving_their_embeddings_fails(
     client.get_or_create_collection("images", metadata={"hnsw:space": "cosine"})
 
     pairs = find_duplicates_in_folder(
-        str(folder), 0.9, 16, 1024, None, None, client, str(tmp_path / "db"), "cpu"
+        str(folder),
+        0.9,
+        16,
+        1024,
+        MagicMock(),
+        None,
+        client,
+        str(tmp_path / "db"),
+        "cpu",
     )
 
     assert [(a, b) for _, a, b in pairs] == [tuple(paths)]

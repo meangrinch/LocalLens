@@ -21,6 +21,7 @@ from index_store import (
 from model_utils import (
     SOFT_TOKEN_CHOICES,
     embed_prepared_batch,
+    frame_distinct_threshold,
     load_model_and_processor,
     prepare_image_batch,
 )
@@ -106,7 +107,11 @@ def _upsert_records_with_store(
                     inputs, model_param, device, max_batch=batch_size_param
                 )
                 batch_processed_records = write_media_embeddings(
-                    collection, batch_records, batch_embeddings, processed_files
+                    collection,
+                    batch_records,
+                    batch_embeddings,
+                    processed_files,
+                    frame_distinct_threshold(model_param),
                 )
                 _store_processed_records(store, batch_processed_records)
             except Exception as e:

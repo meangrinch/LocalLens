@@ -51,6 +51,19 @@ def test_video_frames_become_separate_records(tmp_path, collection):
     ]
 
 
+def test_frame_threshold_sets_which_frames_count_as_one_scene(tmp_path, collection):
+    video = touch(str(tmp_path / "v.mp4"))
+    record = build_media_record(video, str(tmp_path))
+    # Cosine 0.94: distinct at the default threshold, the same scene at 0.935.
+    emb = np.array([[1.0, 0.0, 0.0, 0.0], [0.94, (1 - 0.94**2) ** 0.5, 0.0, 0.0]])
+    write_media_embeddings(collection, [record], emb, [video] * 2)
+    assert len(stored(collection, record)) == 2
+    write_media_embeddings(
+        collection, [record], emb, [video] * 2, frame_threshold=0.935
+    )
+    assert stored(collection, record) == [(record.media_id, 0)]
+
+
 def test_rewrite_with_fewer_frames_leaves_no_stale_records(tmp_path, collection):
     video = touch(str(tmp_path / "v.mp4"))
     record = build_media_record(video, str(tmp_path))

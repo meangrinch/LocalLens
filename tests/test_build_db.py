@@ -38,7 +38,7 @@ def test_update_reports_progress_and_counts(tmp_path, monkeypatch):
     added, removed = build_db.db_update_indexed_folders(
         db,
         collection,
-        None,
+        MagicMock(),
         None,
         "cpu",
         8,

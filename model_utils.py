@@ -12,6 +12,8 @@ from huggingface_hub import constants as hf_constants
 from PIL import Image, ImageOps, UnidentifiedImageError
 from transformers import AutoConfig, AutoModel, AutoProcessor
 
+from index_store import FRAME_DISTINCT_THRESHOLD
+
 # Keep each model's weights in its own cache folder, so deleting that folder frees them.
 hf_constants.HF_HUB_DISABLE_SHARED_BLOBS = True
 
@@ -31,6 +33,9 @@ EMBEDDING_GEMMA_TYPE = "embedding_gemma2"
 SOFT_TOKEN_CHOICES = [70, 140, 280, 560, 1120]
 # EmbeddingGemma 2's retrieval prompt; images are embedded without a prefix.
 EMBEDDING_GEMMA_QUERY_PREFIX = "task: search result | query: "
+# Models whose frames of one video score higher than SigLIP2 so400m's, which the default
+# is tuned on. Each keeps the same frames so400m keeps, measured on 60 videos and GIFs.
+FRAME_DISTINCT_THRESHOLDS = {"google/siglip2-base-patch16-224": 0.935}
 
 # Maps an image's (width, height) to the shortest edge it may be decoded down to.
 MinEdgeFor = Callable[[int, int], int]
@@ -89,6 +94,13 @@ def load_model_and_processor(
 def supports_soft_tokens(processor) -> bool:
     """Whether the processor sizes images by a soft-token budget (EmbeddingGemma 2)."""
     return hasattr(processor.image_processor, "max_soft_tokens")
+
+
+def frame_distinct_threshold(model) -> float:
+    """Cosine at which a sampled frame repeats an already kept frame of its file."""
+    return FRAME_DISTINCT_THRESHOLDS.get(
+        model.config.name_or_path, FRAME_DISTINCT_THRESHOLD
+    )
 
 
 def is_embedding_gemma(model) -> bool:
