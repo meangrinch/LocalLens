@@ -1153,6 +1153,8 @@ def search(
                 "truncation": True,
             }
             if current_model_type == "siglip":
+                # SigLIP2 was trained on lowercased text; cased queries can miss.
+                text_processing_args["text"] = query.lower()
                 text_processing_args["padding"] = "max_length"
                 text_processing_args["max_length"] = 64
             else:  # For CLIP
