@@ -1828,6 +1828,11 @@ if __name__ == "__main__":
                         label="Processing Batch Size",
                         info="Images to process in one batch during add/update. Higher = more memory usage.",
                     )
+                    live_search_checkbox = gr.Checkbox(
+                        value=False,
+                        label="Search as You Type",
+                        info="Update results while typing a text query. With an image in the query, press Enter instead.",
+                    )
                     show_scores_checkbox = gr.Checkbox(
                         value=False,
                         label="Show Scores in Captions",
@@ -2242,6 +2247,24 @@ if __name__ == "__main__":
             fn=search,
             inputs=search_inputs,
             outputs=[results_gallery],
+        )
+
+        def live_search(live: bool, model, query: str, query_image_pil, *search_args):
+            # Text only: an image query would re-run the vision encoder on every keystroke.
+            # Without a model, stay quiet rather than warn per keystroke; Enter still warns.
+            if not live or model is None or query_image_pil is not None:
+                return gr.skip()
+            results = search(query, None, *search_args) if query.strip() else []
+            return (results, *reset_duplicate_view())
+
+        # .change, not .input: Gradio's .input doesn't fire when characters are deleted.
+        query_textbox.change(
+            fn=live_search,
+            inputs=[live_search_checkbox, model_state, *search_inputs],
+            outputs=[results_gallery, *duplicate_view_reset_outputs],
+            # Runs one search at a time and queues only the newest keystroke behind it.
+            trigger_mode="always_last",
+            show_progress="hidden",
         )
 
         random_search_inputs = [
