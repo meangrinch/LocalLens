@@ -9,6 +9,11 @@
 
 ### Vision Embedding Models
 
+- **google/embeddinggemma-2:**
+  - **VRAM:** +1.0 GB
+  - **RAM:** +2 GB
+  - **Storage:** +1.53 GB
+
 - **google/siglip2-so400m-patch14-384:**
   - **VRAM:** +2.1 GB
   - **RAM:** +4 GB

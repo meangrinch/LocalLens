@@ -22,9 +22,10 @@ def test_image_search_returns_each_video_once(tmp_path, monkeypatch):
         }
     )
     model = SimpleNamespace(
+        config=SimpleNamespace(model_type="siglip"),
         get_image_features=lambda **_: SimpleNamespace(
             pooler_output=torch.tensor([[1.0, 0.0]])
-        )
+        ),
     )
     processor = lambda **_: SimpleNamespace(to=lambda _device: {})  # noqa: E731
 
@@ -60,9 +61,10 @@ def test_search_fetches_requested_number_of_files_not_frames(tmp_path, monkeypat
         }
 
     model = SimpleNamespace(
+        config=SimpleNamespace(model_type="siglip"),
         get_image_features=lambda **_: SimpleNamespace(
             pooler_output=torch.tensor([[1.0, 0.0]])
-        )
+        ),
     )
     processor = lambda **_: SimpleNamespace(to=lambda _device: {})  # noqa: E731
     client = SimpleNamespace(get_collection=lambda _: SimpleNamespace(query=query))
@@ -73,3 +75,28 @@ def test_search_fetches_requested_number_of_files_not_frames(tmp_path, monkeypat
     )  # fmt: skip
 
     assert [path for path, _ in results] == [video, a]
+
+
+def test_text_search_without_logits_thresholds_on_cosine(tmp_path, monkeypatch):
+    monkeypatch.setattr(app, "device", "cpu")
+    near, far = str(tmp_path / "near.jpg"), str(tmp_path / "far.jpg")
+    for path in (near, far):
+        open(path, "wb").close()
+    collection = SimpleNamespace(
+        query=lambda **_: {
+            "ids": [["near", "far"]],
+            "documents": [[near, far]],
+            "embeddings": [[[0.8, 0.6], [0.6, 0.8]]],
+            "distances": [[0.2, 0.4]],
+            "metadatas": [[{}, {}]],
+        }
+    )
+    monkeypatch.setattr(app, "text_features", lambda *_: torch.tensor([[1.0, 0.0]]))
+
+    results = search(
+        "cat", None, 50, 0.7, 0.5, 0.5, object(), object(),
+        None, None, SimpleNamespace(get_collection=lambda _: collection),
+        str(tmp_path), False,
+    )  # fmt: skip
+
+    assert [path for path, _ in results] == [near]

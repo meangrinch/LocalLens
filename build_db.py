@@ -14,10 +14,12 @@ from index_store import (
     canonical_path,
     delete_media_embeddings,
     migrate_legacy_db,
+    open_images_collection,
     write_indexed_folders_mirror,
     write_media_embeddings,
 )
 from model_utils import (
+    SOFT_TOKEN_CHOICES,
     embed_prepared_batch,
     load_model_and_processor,
     prepare_image_batch,
@@ -394,24 +396,30 @@ if __name__ == "__main__":
     parser.add_argument(
         "--batch_size", type=int, default=16, help="Batch size for adding images to DB."
     )
+    parser.add_argument(
+        "--max_soft_tokens",
+        type=int,
+        choices=SOFT_TOKEN_CHOICES,
+        help="Image detail for EmbeddingGemma 2 (default 280). Each value needs its own "
+        "--db_path, e.g. 'img_db/embeddinggemma_2_140'.",
+    )
     args = parser.parse_args()
 
     os.makedirs(args.db_path, exist_ok=True)
 
-    model, processor = load_model_and_processor(args.model_path, device, dtype)
+    model, processor = load_model_and_processor(
+        args.model_path, device, dtype, args.max_soft_tokens
+    )
 
     print(f"Initializing ChromaDB: {args.db_path}")
     client = chromadb.PersistentClient(path=args.db_path)
 
-    collection_name = "images"
     try:
-        collection = client.get_collection(name=collection_name)
-        print(f"Using existing collection: '{collection_name}'")
-    except Exception:
-        collection = client.create_collection(
-            name=collection_name, metadata={"hnsw:space": "cosine"}
+        collection = open_images_collection(
+            client, getattr(processor.image_processor, "max_soft_tokens", None)
         )
-        print(f"Created collection: '{collection_name}'")
+    except ValueError as e:
+        parser.error(f"{e} Pass that --max_soft_tokens or use another --db_path.")
 
     migrate_legacy_db(args.db_path, collection)
 

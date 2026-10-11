@@ -54,6 +54,7 @@ An offline visual search engine for local image and video collections. Indexes d
   python build_db.py --model_path "google/siglip2-so400m-patch16-512" --db_path "img_db/siglip2_so400m" --add "path/to/images"
   ```
 - **Sync Changes:** Click Update/Sync in the Web UI, or pass `--update` via CLI to rescan indexed folders for additions or deletions.
+- **Image Detail (EmbeddingGemma 2):** Pick 70 to 1120 soft tokens under Select Model (default 280). Higher values see finer detail but index slower, and each value keeps its own index. Via CLI, pass `--max_soft_tokens 140` with a matching `--db_path` such as `img_db/embeddinggemma_2_140`.
 
 ### 3. Search
 
@@ -70,7 +71,7 @@ An offline visual search engine for local image and video collections. Indexes d
 - **Search**: Natural language text, image, and combined text + image queries
 - **Reverse Search**: Find visually similar media from an uploaded image
 - **Duplicates**: Locate duplicate and near-duplicate image and video pairs by similarity threshold
-- **Models**: Vision embedding backbones (SigLIP 2)
+- **Models**: Vision embedding backbones (EmbeddingGemma 2, SigLIP 2)
 - **Formats**: Image and video support (jpg, png, webp, mp4, mkv, etc.)
 - **Interfaces**: Web UI (Gradio) and CLI
 
@@ -104,6 +105,7 @@ LocalLens is open-source and free. If it saves you time finding photos or cleani
 <details>
 <summary><b>ML Models and Libraries</b></summary>
 
+- EmbeddingGemma 2: [Google](https://huggingface.co/google/embeddinggemma-2)
 - SigLIP 2 SO400M (384): [Google](https://huggingface.co/google/siglip2-so400m-patch14-384)
 - SigLIP 2 SO400M (512): [Google](https://huggingface.co/google/siglip2-so400m-patch16-512)
 - SigLIP 2 Base: [Google](https://huggingface.co/google/siglip2-base-patch16-224)

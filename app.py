@@ -55,44 +55,97 @@ from index_store import (
     is_path_under_folder,
     media_type_for_path,
     migrate_legacy_db,
+    open_images_collection,
     path_and_caption_from_result,
     query_filter_for_folder,
     relative_caption,
     reveal_in_file_manager,
     trash_and_delete_indexed_media,
 )
-from model_utils import N_FRAMES, load_model_and_processor, probe_batch_size
+from model_utils import (
+    N_FRAMES,
+    SOFT_TOKEN_CHOICES,
+    image_features,
+    load_model_and_processor,
+    preprocess_images_cpu,
+    probe_batch_size,
+    supports_soft_tokens,
+    text_features,
+)
 
 __version__ = "1.8.0"
 
 # --- Configuration ---
 AVAILABLE_MODELS = [
+    "google/embeddinggemma-2",
     "google/siglip2-so400m-patch14-384",
     "google/siglip2-so400m-patch16-512",
     "google/siglip2-base-patch16-224",
 ]
 DEFAULT_MODEL_PATH = None
+# EmbeddingGemma 2's own default; its index keeps the folder name it had before the option.
+DEFAULT_SOFT_TOKENS = 280
 
 INITIAL_N_RESULTS = 50  # Number of results to fetch from ChromaDB before filtering
 
 FALLBACK_SIGLIP_THRESHOLD = -8.0
+FALLBACK_TEXT_COSINE_THRESHOLD = 0.0
 FALLBACK_COMBINED_THRESHOLD = 0.45
 FALLBACK_IMAGE_ONLY_THRESHOLD = 0.70
+FALLBACK_DUPLICATE_THRESHOLD = 0.97
 MODEL_CONFIDENCE_DEFAULTS = {
+    # Cosine thresholds per max_soft_tokens; each passes the same share of non-matches
+    # as SigLIP's defaults on screenshot and anime test sets (mean of the two; the
+    # stricter for duplicates). 560 and 1120 are estimated from a 50-image subset.
+    "google/embeddinggemma-2": {
+        70: {
+            "text_thresh": 0.65,
+            "combined_thresh": 0.79,
+            "image_only_thresh": 0.85,
+            "duplicate_thresh": 0.95,
+        },
+        140: {
+            "text_thresh": 0.64,
+            "combined_thresh": 0.78,
+            "image_only_thresh": 0.84,
+            "duplicate_thresh": 0.94,
+        },
+        280: {
+            "text_thresh": 0.62,
+            "combined_thresh": 0.76,
+            "image_only_thresh": 0.81,
+            "duplicate_thresh": 0.92,
+        },
+        560: {
+            "text_thresh": 0.62,
+            "combined_thresh": 0.75,
+            "image_only_thresh": 0.80,
+            "duplicate_thresh": 0.91,
+        },
+        1120: {
+            "text_thresh": 0.62,
+            "combined_thresh": 0.76,
+            "image_only_thresh": 0.82,
+            "duplicate_thresh": 0.91,
+        },
+    },
     "google/siglip2-so400m-patch14-384": {
-        "siglip_thresh": -8.0,
+        "text_thresh": -8.0,
         "combined_thresh": 0.50,
         "image_only_thresh": 0.85,
+        "duplicate_thresh": 0.97,
     },
     "google/siglip2-so400m-patch16-512": {
-        "siglip_thresh": -8.0,
+        "text_thresh": -8.0,
         "combined_thresh": 0.50,
         "image_only_thresh": 0.85,
+        "duplicate_thresh": 0.97,
     },
     "google/siglip2-base-patch16-224": {
-        "siglip_thresh": -8.0,
+        "text_thresh": -8.0,
         "combined_thresh": 0.50,
         "image_only_thresh": 0.85,
+        "duplicate_thresh": 0.97,
     },
 }
 DB_ROOT = "img_db"
@@ -150,9 +203,36 @@ def get_simplified_model_identifier(model_path_str: str) -> str:
     return model_name_part.replace("-", "_").replace(".", "_")
 
 
-def generate_db_path_for_model(model_path_str: str) -> str:
+def text_threshold_slider(value: float, has_logits: bool = True, visible: bool = True):
+    if has_logits:
+        return gr.Slider(
+            minimum=-15.0,
+            maximum=15.0,
+            step=0.1,
+            value=value,
+            visible=visible,
+            label="Logit Confidence Threshold (SigLIP)",
+            info="SigLIP model confidence. Higher values = more confident.",
+        )
+    return gr.Slider(
+        minimum=0.0,
+        maximum=1.0,
+        step=0.01,
+        value=value,
+        visible=visible,
+        label="Cosine Similarity Threshold (Text Only)",
+        info="For text search (text input only). Higher values = more confident.",
+    )
+
+
+def generate_db_path_for_model(
+    model_path_str: str, soft_tokens: int | None = None
+) -> str:
     """Generates a database directory path like 'img_db/simplified_model_id/'."""
     simplified_id = get_simplified_model_identifier(model_path_str)
+    # Embeddings from different image detail levels don't compare, so each gets an index.
+    if soft_tokens and soft_tokens != DEFAULT_SOFT_TOKENS:
+        simplified_id += f"_{soft_tokens}"
     return os.path.join(DB_ROOT, simplified_id)
 
 
@@ -180,7 +260,9 @@ def read_indexed_folders(db_path: str) -> list[str]:
 
 
 def load_and_switch_model_db(
-    selected_model_path: str, progress=gr.Progress(track_tqdm=True)
+    selected_model_path: str,
+    soft_tokens: int = DEFAULT_SOFT_TOKENS,
+    progress=gr.Progress(track_tqdm=True),
 ):
     """Loads the selected model, its processor, and initializes/loads its specific ChromaDB."""
     yield (
@@ -197,6 +279,8 @@ def load_and_switch_model_db(
         None,
         gr.Dropdown(interactive=False),
         None,
+        None,
+        gr.Dropdown(interactive=False),
     )
 
     if not selected_model_path:
@@ -209,11 +293,13 @@ def load_and_switch_model_db(
             None,
             None,
             "",
-            gr.Slider(value=FALLBACK_SIGLIP_THRESHOLD, visible=False),
+            text_threshold_slider(FALLBACK_SIGLIP_THRESHOLD, visible=False),
             FALLBACK_COMBINED_THRESHOLD,
             FALLBACK_IMAGE_ONLY_THRESHOLD,
             gr.Dropdown(interactive=True),
             DEFAULT_BATCH_SIZE,
+            FALLBACK_DUPLICATE_THRESHOLD,
+            gr.Dropdown(visible=False, interactive=True),
         )
         return
 
@@ -221,26 +307,31 @@ def load_and_switch_model_db(
     ui_siglip_thresh_to_set = FALLBACK_SIGLIP_THRESHOLD
     ui_combined_thresh_to_set = FALLBACK_COMBINED_THRESHOLD
     ui_image_only_thresh_to_set = FALLBACK_IMAGE_ONLY_THRESHOLD
+    ui_duplicate_thresh_to_set = FALLBACK_DUPLICATE_THRESHOLD
     ui_batch_size_to_set = DEFAULT_BATCH_SIZE
-    new_db_path = generate_db_path_for_model(selected_model_path)
-    progress(0.1, desc=f"DB path: {new_db_path}")
-    if not os.path.exists(new_db_path):
-        os.makedirs(new_db_path)
-        progress(0.15, desc=f"Created directory: {new_db_path}")
-    indexed_folders_file = os.path.join(new_db_path, "indexed_folders.txt")
-    if not os.path.exists(indexed_folders_file):
-        try:
-            if not os.path.exists(indexed_folders_file):
+    # Provisional until the model loads and shows whether soft tokens apply.
+    new_db_path = generate_db_path_for_model(selected_model_path, soft_tokens)
+    try:
+        progress(0.1, desc="Loading model...")
+        new_model, new_processor = load_model_and_processor(
+            selected_model_path, device, dtype, soft_tokens
+        )
+        has_soft_tokens = supports_soft_tokens(new_processor)
+        if not has_soft_tokens:
+            soft_tokens = None
+        new_db_path = generate_db_path_for_model(selected_model_path, soft_tokens)
+        progress(0.3, desc=f"DB path: {new_db_path}")
+        if not os.path.exists(new_db_path):
+            os.makedirs(new_db_path)
+            progress(0.35, desc=f"Created directory: {new_db_path}")
+        indexed_folders_file = os.path.join(new_db_path, "indexed_folders.txt")
+        if not os.path.exists(indexed_folders_file):
+            try:
                 with open(indexed_folders_file, "a"):
                     pass
-                progress(0.2, desc=f"Created {indexed_folders_file}")
-        except Exception as e:
-            print(f"Error creating indexed folders file: {e}")
-    try:
-        progress(0.3, desc="Loading model...")
-        new_model, new_processor = load_model_and_processor(
-            selected_model_path, device, dtype
-        )
+                progress(0.4, desc=f"Created {indexed_folders_file}")
+            except Exception as e:
+                print(f"Error creating indexed folders file: {e}")
         progress(0.5, desc="Sizing batches to available memory...")
         ui_batch_size_to_set = probe_batch_size(
             new_model, new_processor, device, DEFAULT_BATCH_SIZE
@@ -254,9 +345,15 @@ def load_and_switch_model_db(
         new_logit_bias_val = (
             new_model.logit_bias.item() if hasattr(new_model, "logit_bias") else None
         )
+        has_logits = (
+            new_logit_scale_exp_val is not None and new_logit_bias_val is not None
+        )
         model_specific_conf = MODEL_CONFIDENCE_DEFAULTS.get(selected_model_path, {})
+        if soft_tokens:
+            model_specific_conf = model_specific_conf.get(soft_tokens, {})
         ui_siglip_thresh_to_set = model_specific_conf.get(
-            "siglip_thresh", FALLBACK_SIGLIP_THRESHOLD
+            "text_thresh",
+            FALLBACK_SIGLIP_THRESHOLD if has_logits else FALLBACK_TEXT_COSINE_THRESHOLD,
         )
         ui_combined_thresh_to_set = model_specific_conf.get(
             "combined_thresh", FALLBACK_COMBINED_THRESHOLD
@@ -264,19 +361,20 @@ def load_and_switch_model_db(
         ui_image_only_thresh_to_set = model_specific_conf.get(
             "image_only_thresh", FALLBACK_IMAGE_ONLY_THRESHOLD
         )
+        ui_duplicate_thresh_to_set = model_specific_conf.get(
+            "duplicate_thresh", FALLBACK_DUPLICATE_THRESHOLD
+        )
         progress(0.7, desc="Initializing ChromaDB client...")
         new_chroma_client = chromadb.PersistentClient(path=new_db_path)
+        collection = open_images_collection(new_chroma_client, soft_tokens)
         try:
-            collection = new_chroma_client.get_or_create_collection(
-                name="images", metadata={"hnsw:space": "cosine"}
-            )
             migrated_count = migrate_legacy_db(new_db_path, collection)
             if migrated_count:
                 progress(0.85, desc=f"Migrated {migrated_count} legacy records.")
         except Exception as db_e:
             print(f"ChromaDB collection error: {db_e}")
             gr.Warning(
-                f"ChromaDB client initialized for '{new_db_path}', but error ensuring collection: {db_e}"
+                f"ChromaDB client initialized for '{new_db_path}', but error migrating legacy records: {db_e}"
             )
         progress(0.9, desc="ChromaDB client initialized.")
         gr.Info(
@@ -292,11 +390,13 @@ def load_and_switch_model_db(
             new_logit_bias_val,
             new_chroma_client,
             "\n".join(current_indexed_folders),
-            gr.Slider(value=ui_siglip_thresh_to_set, visible=True),
+            text_threshold_slider(ui_siglip_thresh_to_set, has_logits),
             ui_combined_thresh_to_set,
             ui_image_only_thresh_to_set,
             gr.Dropdown(interactive=True),
             ui_batch_size_to_set,
+            ui_duplicate_thresh_to_set,
+            gr.Dropdown(visible=has_soft_tokens, interactive=True),
         )
     except Exception as e:
         print(f"Error loading model/DB: {e}")
@@ -313,11 +413,13 @@ def load_and_switch_model_db(
             None,
             None,
             "\n".join(current_indexed_folders_on_error),
-            gr.Slider(value=FALLBACK_SIGLIP_THRESHOLD, visible=False),
+            text_threshold_slider(FALLBACK_SIGLIP_THRESHOLD, visible=False),
             FALLBACK_COMBINED_THRESHOLD,
             FALLBACK_IMAGE_ONLY_THRESHOLD,
             gr.Dropdown(interactive=True),
             DEFAULT_BATCH_SIZE,
+            FALLBACK_DUPLICATE_THRESHOLD,
+            gr.Dropdown(interactive=True),
         )
 
 
@@ -1088,17 +1190,9 @@ def search(
     if text_query_present:
         print(f"Processing text query: '{query}'")
         with torch.no_grad():
-            inputs = current_processor(
-                # SigLIP2 was trained on lowercased text; cased queries can miss.
-                text=query.lower(),
-                return_tensors="pt",
-                truncation=True,
-                padding="max_length",
-                max_length=64,
-            ).to(device)
-            text_features_from_model = current_model.get_text_features(
-                **inputs, return_dict=True
-            ).pooler_output
+            text_features_from_model = text_features(
+                query, current_model, current_processor, device
+            )
             text_emb_normalized_float32 = F.normalize(
                 text_features_from_model.to(torch.float32), p=2, dim=-1
             )
@@ -1107,12 +1201,10 @@ def search(
     if image_query_present:
         print("Processing image query...")
         with torch.no_grad():
-            inputs = current_processor(
-                images=[query_image_pil], return_tensors="pt"
-            ).to(device)
-            query_image_features = current_model.get_image_features(
-                **inputs, return_dict=True
-            ).pooler_output
+            inputs = preprocess_images_cpu([query_image_pil], current_processor).to(
+                device
+            )
+            query_image_features = image_features(current_model, inputs)
             image_emb_normalized_float32 = F.normalize(
                 query_image_features.to(torch.float32), p=2, dim=-1
             )
@@ -1162,17 +1254,17 @@ def search(
                 dim=-1,
             )
 
-            batch_logit_val_for_print = torch.zeros_like(batch_cos_sim)
-            passes_threshold_mask = torch.zeros_like(batch_cos_sim, dtype=torch.bool)
-
-            if (
+            has_logits = (
                 current_logit_scale_exp_val is not None
                 and current_logit_bias_val is not None
-            ):
-                batch_logit_val_for_print = (
-                    batch_cos_sim * current_logit_scale_exp_val
-                ) + current_logit_bias_val
-                passes_threshold_mask = batch_logit_val_for_print > logit_thresh_ui
+            )
+            # Models without a logit scale/bias (EmbeddingGemma) threshold on cosine.
+            batch_logit_val_for_print = (
+                batch_cos_sim * current_logit_scale_exp_val + current_logit_bias_val
+                if has_logits
+                else batch_cos_sim
+            )
+            passes_threshold_mask = batch_logit_val_for_print > logit_thresh_ui
 
             doc_paths_all = query_results["documents"][0]
             metadatas_all = (query_results.get("metadatas") or [[]])[0] or []
@@ -1200,11 +1292,11 @@ def search(
                     )
                     cos_sim_val = batch_cos_sim[i].item()
                     logit_val = batch_logit_val_for_print[i].item()
-                    sigmoid_val = torch.sigmoid(
-                        torch.tensor(logit_val, device=device)
-                    ).item()
                     status_char = "✓" if passes_threshold_mask[i].item() else "✗"
-                    log_details = f"(cos: {cos_sim_val:.4f}, logit: {logit_val:.4f}, sigmoid: {sigmoid_val:.4f})"
+                    log_details = f"(cos: {cos_sim_val:.4f})"
+                    if has_logits:
+                        sigmoid_val = torch.sigmoid(torch.tensor(logit_val)).item()
+                        log_details = f"(cos: {cos_sim_val:.4f}, logit: {logit_val:.4f}, sigmoid: {sigmoid_val:.4f})"
                     print(f"{status_char} {doc_path} {log_details}")
 
     elif image_query_present and not text_query_present:
@@ -1652,6 +1744,13 @@ if __name__ == "__main__":
                     label="Select Model",
                     allow_custom_value=True,
                 )
+                soft_tokens_dropdown = gr.Dropdown(
+                    choices=SOFT_TOKEN_CHOICES,
+                    value=DEFAULT_SOFT_TOKENS,
+                    visible=False,
+                    label="Image Detail (soft tokens)",
+                    info="Higher sees finer detail but indexes slower. Each value has its own index.",
+                )
                 with gr.Accordion("Database Management", open=False):
                     active_folder_dropdown = gr.Dropdown(
                         label="Active Folder",
@@ -1694,7 +1793,7 @@ if __name__ == "__main__":
                         minimum=0.0,
                         maximum=1.0,
                         step=0.01,
-                        value=0.97,
+                        value=FALLBACK_DUPLICATE_THRESHOLD,
                         label="Similarity Threshold",
                         info="Cosine similarity threshold for reporting duplicates. Higher = more strict.",
                     )
@@ -1717,14 +1816,8 @@ if __name__ == "__main__":
                         label="Initial N Results (Max Images)",
                         info="Images to fetch from DB before applying confidence thresholds.",
                     )
-                    siglip_thresh_slider = gr.Slider(
-                        minimum=-15.0,
-                        maximum=15.0,
-                        step=0.1,
-                        value=FALLBACK_SIGLIP_THRESHOLD,
-                        visible=False,
-                        label="Logit Confidence Threshold (SigLIP)",
-                        info="SigLIP model confidence. Higher values = more confident.",
+                    siglip_thresh_slider = text_threshold_slider(
+                        FALLBACK_SIGLIP_THRESHOLD, visible=False
                     )
                     image_only_cosine_thresh_slider = gr.Slider(
                         minimum=0.0,
@@ -1904,6 +1997,8 @@ if __name__ == "__main__":
             image_only_cosine_thresh_slider,
             model_dropdown,
             batch_size_slider,
+            duplicate_threshold_slider,
+            soft_tokens_dropdown,
         ]
 
         def update_all_folder_dropdowns(indexed_folders_text: str):
@@ -1932,7 +2027,7 @@ if __name__ == "__main__":
 
         app.load(
             fn=load_and_switch_model_db,
-            inputs=[active_model_path_state],
+            inputs=[active_model_path_state, soft_tokens_dropdown],
             outputs=load_outputs,
             show_progress="full",
         ).then(
@@ -1945,20 +2040,22 @@ if __name__ == "__main__":
             outputs=inspector_and_gallery_outputs,
         ).then(**refresh_index_summary)
 
-        model_dropdown.change(
-            fn=load_and_switch_model_db,
-            inputs=[model_dropdown],
-            outputs=load_outputs,
-            show_progress="full",
-        ).then(
-            fn=update_all_folder_dropdowns,
-            inputs=[indexed_folders_state],
-            outputs=folder_dropdowns,
-        ).then(
-            fn=empty_duplicate_results,
-            inputs=[],
-            outputs=inspector_and_gallery_outputs,
-        ).then(**refresh_index_summary)
+        # .input on the soft-token dropdown: the loader's own updates must not re-trigger it.
+        for switch_event in (model_dropdown.change, soft_tokens_dropdown.input):
+            switch_event(
+                fn=load_and_switch_model_db,
+                inputs=[model_dropdown, soft_tokens_dropdown],
+                outputs=load_outputs,
+                show_progress="full",
+            ).then(
+                fn=update_all_folder_dropdowns,
+                inputs=[indexed_folders_state],
+                outputs=folder_dropdowns,
+            ).then(
+                fn=empty_duplicate_results,
+                inputs=[],
+                outputs=inspector_and_gallery_outputs,
+            ).then(**refresh_index_summary)
 
         update_db_button.click(
             fn=handle_update_sync_button_click,

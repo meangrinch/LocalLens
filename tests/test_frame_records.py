@@ -9,6 +9,7 @@ from PIL import Image
 from index_store import (
     IndexStore,
     build_media_record,
+    open_images_collection,
     trash_and_delete_indexed_media,
     write_media_embeddings,
 )
@@ -113,3 +114,13 @@ def test_invalidate_redecoded_stills_marks_rotated_and_multi_image_files(tmp_pat
     }
     assert stale == {"rotated.jpg", "mpo.jpg", "anim.png"}
     assert store.invalidate_redecoded_stills() == 0
+
+
+def test_index_refuses_an_image_detail_it_was_not_built_with(tmp_path):
+    client = chromadb.PersistentClient(path=str(tmp_path))
+    open_images_collection(client, 140)
+    assert open_images_collection(client, 140).metadata["max_soft_tokens"] == 140
+    with pytest.raises(ValueError, match="max_soft_tokens=140"):
+        open_images_collection(client, 280)
+    with pytest.raises(ValueError):
+        open_images_collection(client, None)

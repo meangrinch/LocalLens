@@ -1,4 +1,6 @@
+import math
 import os
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 
@@ -8,7 +10,7 @@ import torch
 import torch.nn.functional as F
 from huggingface_hub import constants as hf_constants
 from PIL import Image, ImageOps, UnidentifiedImageError
-from transformers import AutoModel, AutoProcessor
+from transformers import AutoConfig, AutoModel, AutoProcessor
 
 # Keep each model's weights in its own cache folder, so deleting that folder frees them.
 hf_constants.HF_HUB_DISABLE_SHARED_BLOBS = True
@@ -24,6 +26,14 @@ VRAM_BUDGET_FRACTION = 0.7
 # Most frames sampled, evenly spaced, from each video or animated image.
 N_FRAMES = 8
 ANIMATED_FORMATS = {"GIF", "PNG", "WEBP"}
+EMBEDDING_GEMMA_TYPE = "embedding_gemma2"
+# max_soft_tokens values EmbeddingGemma 2 supports (its image detail levels).
+SOFT_TOKEN_CHOICES = [70, 140, 280, 560, 1120]
+# EmbeddingGemma 2's retrieval prompt; images are embedded without a prefix.
+EMBEDDING_GEMMA_QUERY_PREFIX = "task: search result | query: "
+
+# Maps an image's (width, height) to the shortest edge it may be decoded down to.
+MinEdgeFor = Callable[[int, int], int]
 
 _LOADER_MAX_WORKERS = max(1, (os.cpu_count() or 8) // 2)
 _loader_executor: ThreadPoolExecutor | None = None
@@ -33,16 +43,30 @@ def load_model_and_processor(
     model_path: str,
     device: torch.device | str,
     dtype: torch.dtype,
+    max_soft_tokens: int | None = None,
 ):
     """
     Loads the appropriate model and processor using Auto classes.
+    max_soft_tokens sets the image detail of models that have one (EmbeddingGemma 2);
+    other models ignore it.
     Returns: (model, processor)
     """
     print(f"Loading model: {model_path}...")
 
+    config = AutoConfig.from_pretrained(
+        model_path, trust_remote_code=TRUST_REMOTE_MODEL_CODE
+    )
+    if config.model_type == EMBEDDING_GEMMA_TYPE:
+        # The audio tower is ~40% of the weights and media search never uses it.
+        config.audio_config = None
+        # float16 silently yields NaN or degraded EmbeddingGemma embeddings.
+        if dtype == torch.float16:
+            dtype = torch.float32
+
     model = (
         AutoModel.from_pretrained(
             model_path,
+            config=config,
             dtype=dtype,
             trust_remote_code=TRUST_REMOTE_MODEL_CODE,
             use_safetensors=True,
@@ -54,10 +78,52 @@ def load_model_and_processor(
     processor = AutoProcessor.from_pretrained(
         model_path, trust_remote_code=TRUST_REMOTE_MODEL_CODE
     )
+    if max_soft_tokens and supports_soft_tokens(processor):
+        processor.image_processor.max_soft_tokens = max_soft_tokens
 
     print(f"Model loaded: {model_path}")
 
     return model, processor
+
+
+def supports_soft_tokens(processor) -> bool:
+    """Whether the processor sizes images by a soft-token budget (EmbeddingGemma 2)."""
+    return hasattr(processor.image_processor, "max_soft_tokens")
+
+
+def is_embedding_gemma(model) -> bool:
+    return model.config.model_type == EMBEDDING_GEMMA_TYPE
+
+
+def _mean_pooled(model, inputs) -> torch.Tensor:
+    hidden = model(**inputs).last_hidden_state.float()
+    mask = inputs["attention_mask"].unsqueeze(-1).float()
+    return (hidden * mask).sum(1) / mask.sum(1)
+
+
+def image_features(model, inputs) -> torch.Tensor:
+    """Unnormalized embeddings for preprocessed images already on the model's device."""
+    if is_embedding_gemma(model):
+        return _mean_pooled(model, inputs)
+    return model.get_image_features(**inputs, return_dict=True).pooler_output
+
+
+def text_features(query: str, model, processor, device) -> torch.Tensor:
+    """Unnormalized embedding of a search query, prompted the way the model was trained."""
+    if is_embedding_gemma(model):
+        inputs = processor(
+            text=EMBEDDING_GEMMA_QUERY_PREFIX + query, return_tensors="pt"
+        ).to(device)
+        return _mean_pooled(model, inputs)
+    inputs = processor(
+        # SigLIP2 was trained on lowercased text; cased queries can miss.
+        text=query.lower(),
+        return_tensors="pt",
+        truncation=True,
+        padding="max_length",
+        max_length=64,
+    ).to(device)
+    return model.get_text_features(**inputs, return_dict=True).pooler_output
 
 
 def _get_loader_executor() -> ThreadPoolExecutor:
@@ -107,11 +173,25 @@ def _extract_video_frames(path: str) -> list[Image.Image]:
     return [Image.fromarray(cv2.cvtColor(f, cv2.COLOR_BGR2RGB)) for f in frames]
 
 
-def _draft_size(processor) -> int | None:
-    """Minimum decode size for JPEG drafting, or None if the input size is unknown."""
-    size = getattr(processor.image_processor, "size", None) or {}
+def _min_decode_edge(processor) -> MinEdgeFor | None:
+    """Per-image minimum decode edge, or None if the model's input size is unknown."""
+    image_processor = processor.image_processor
+    size = getattr(image_processor, "size", None) or {}
     edge = size.get("shortest_edge") or max(size.get("height", 0), size.get("width", 0))
-    return edge * JPEG_DRAFT_MARGIN if edge else None
+    if edge:
+        return lambda _width, _height: edge * JPEG_DRAFT_MARGIN
+    if not getattr(image_processor, "max_soft_tokens", None):
+        return None
+    # EmbeddingGemma 2 resizes to fit a patch budget, keeping the aspect ratio, and
+    # never below one pooled patch per side; this bounds its target's short edge.
+    side = image_processor.pooling_kernel_size * image_processor.patch_size
+
+    def edge_for(width: int, height: int) -> int:
+        ratio = min(width, height) / max(width, height)
+        ideal = side * math.sqrt(image_processor.max_soft_tokens * ratio)
+        return math.ceil(max(side, ideal)) * JPEG_DRAFT_MARGIN
+
+    return edge_for
 
 
 def _shrink(image: Image.Image, min_edge: int | None) -> Image.Image:
@@ -140,7 +220,9 @@ def _read_animation_frames(src: Image.Image) -> list[Image.Image]:
     return frames
 
 
-def decode_frames(path: str, draft_size: int | None = None) -> list[Image.Image]:
+def decode_frames(
+    path: str, min_edge_for: MinEdgeFor | None = None
+) -> list[Image.Image]:
     """RGB frames for a media file: one for still images, up to N_FRAMES otherwise."""
     if os.path.splitext(path)[1].lower() in VIDEO_EXTENSIONS_UTILS:
         frames = _extract_video_frames(path)
@@ -151,19 +233,23 @@ def decode_frames(path: str, draft_size: int | None = None) -> list[Image.Image]
             if src.format in ANIMATED_FORMATS and getattr(src, "is_animated", False):
                 frames = _read_animation_frames(src)
             else:
-                if draft_size:
+                if min_edge_for:
                     # libjpeg DCT scaling (JPEG only): skips most decode work on large photos.
-                    src.draft("RGB", (draft_size, draft_size))
+                    edge = min_edge_for(*src.size)
+                    src.draft("RGB", (edge, edge))
                 return [ImageOps.exif_transpose(src).convert("RGB")]
-    return [_shrink(frame, draft_size) for frame in frames]
+    return [
+        _shrink(frame, min_edge_for(*frame.size) if min_edge_for else None)
+        for frame in frames
+    ]
 
 
 def _load_and_convert_image(
     path: str,
-    draft_size: int | None = None,
+    min_edge_for: MinEdgeFor | None = None,
 ) -> tuple[list[Image.Image], str | None, str | None]:
     try:
-        return decode_frames(path, draft_size), path, None
+        return decode_frames(path, min_edge_for), path, None
     except (FileNotFoundError, UnidentifiedImageError, IOError, Exception) as e:
         return [], None, f"Warning: Error processing {path}: {e}"
 
@@ -176,7 +262,7 @@ def _empty_features(device: torch.device | str) -> np.ndarray:
 
 def decode_images(
     image_paths_batch: list[str],
-    draft_size: int | None = None,
+    min_edge_for: MinEdgeFor | None = None,
 ) -> tuple[list[Image.Image], list[str]]:
     """Decode a batch of media paths; returns all frames and each frame's source path."""
     valid_images_pil: list[Image.Image] = []
@@ -184,7 +270,8 @@ def decode_images(
 
     results = list(
         _get_loader_executor().map(
-            partial(_load_and_convert_image, draft_size=draft_size), image_paths_batch
+            partial(_load_and_convert_image, min_edge_for=min_edge_for),
+            image_paths_batch,
         )
     )
 
@@ -200,8 +287,11 @@ def decode_images(
 
 def preprocess_images_cpu(images: list[Image.Image], processor):
     """Run the HF processor on CPU only so this can overlap with GPU work."""
-    # padding=True to prevent crashes with 'naflex' models
-    return processor(images=images, return_tensors="pt", padding=True)
+    # One image per sample: EmbeddingGemma would otherwise fuse a flat list into one
+    # embedding. padding=True to prevent crashes with 'naflex' models.
+    return processor(
+        images=[[image] for image in images], return_tensors="pt", padding=True
+    )
 
 
 def prepare_image_batch(
@@ -216,7 +306,7 @@ def prepare_image_batch(
     the GPU embeds.
     """
     valid_images_pil, valid_paths = decode_images(
-        image_paths_batch, _draft_size(processor)
+        image_paths_batch, _min_decode_edge(processor)
     )
     if not valid_images_pil:
         return None, []
@@ -238,11 +328,8 @@ def embed_prepared_batch(
     with torch.no_grad():
         for start in range(0, total, step):
             chunk = {k: v[start : start + step].to(device) for k, v in inputs.items()}
-            image_features = model.get_image_features(
-                **chunk, return_dict=True
-            ).pooler_output
-            image_features = F.normalize(image_features, p=2, dim=-1)
-            chunks.append(image_features.float().cpu().numpy())
+            features = F.normalize(image_features(model, chunk), p=2, dim=-1)
+            chunks.append(features.float().cpu().numpy())
 
     device_type = device.type if hasattr(device, "type") else device
     target_type = np.float16 if device_type != "cpu" else np.float32

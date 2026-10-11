@@ -54,6 +54,7 @@
   python build_db.py --model_path "google/siglip2-so400m-patch16-512" --db_path "img_db/siglip2_so400m" --add "path/to/images"
   ```
 - **同步更改：** 在 Web UI 中点击 Update/Sync，或在命令行中传入 `--update`，重新扫描已索引文件夹中的新增或删除内容。
+- **图像细节（EmbeddingGemma 2）：** 在 Select Model 下方选择 70 到 1120 个软令牌（默认 280）。数值越高，识别的细节越精细，但索引越慢，且每个数值使用独立的索引。在命令行中传入 `--max_soft_tokens 140`，并搭配相应的 `--db_path`，例如 `img_db/embeddinggemma_2_140`。
 
 ### 3. 搜索
 
@@ -70,7 +71,7 @@
 - **搜索**：自然语言文本、图像以及图文混合查询
 - **以图搜图**：通过上传的图像查找视觉上相似的媒体
 - **重复检测**：通过相似度阈值定位完全重复与高度相似的图像与视频对
-- **模型**：视觉嵌入骨干网络（SigLIP 2）
+- **模型**：视觉嵌入骨干网络（EmbeddingGemma 2、SigLIP 2）
 - **格式**：支持常见图像与视频格式（jpg、png、webp、mp4、mkv 等）
 - **界面**：Web UI (Gradio) 和命令行界面 (CLI)
 
@@ -104,6 +105,7 @@ LocalLens 是免费且开源的。如果它为您查找照片或清理重复图�
 <details>
 <summary><b>ML 模型与相关开源库</b></summary>
 
+- EmbeddingGemma 2: [Google](https://huggingface.co/google/embeddinggemma-2)
 - SigLIP 2 SO400M (384): [Google](https://huggingface.co/google/siglip2-so400m-patch14-384)
 - SigLIP 2 SO400M (512): [Google](https://huggingface.co/google/siglip2-so400m-patch16-512)
 - SigLIP 2 Base: [Google](https://huggingface.co/google/siglip2-base-patch16-224)

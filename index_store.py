@@ -189,6 +189,25 @@ def batched(items: list, batch_size: int) -> Iterable[list]:
         yield items[start : start + batch_size]
 
 
+def open_images_collection(client, max_soft_tokens: int | None = None):
+    """The 'images' collection, created if missing.
+
+    Raises ValueError if it was built at another image detail: those embeddings have the
+    same size, so mixing them would fail silently.
+    """
+    metadata = {"hnsw:space": "cosine"}
+    if max_soft_tokens:
+        metadata["max_soft_tokens"] = max_soft_tokens
+    # Chroma keeps an existing collection's metadata, so this records the first value.
+    collection = client.get_or_create_collection(name="images", metadata=metadata)
+    built_with = (collection.metadata or {}).get("max_soft_tokens")
+    if built_with and built_with != max_soft_tokens:
+        raise ValueError(
+            f"This index was built with max_soft_tokens={built_with}, not {max_soft_tokens}."
+        )
+    return collection
+
+
 def delete_media_embeddings(collection, media_ids: list[str]) -> None:
     """Deletes every Chroma record (all frames) belonging to the given media."""
     for batch in batched(list(media_ids), 500):

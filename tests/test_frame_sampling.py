@@ -58,13 +58,13 @@ def test_truncated_gif_keeps_frames_that_decoded(tmp_path):
     assert 1 <= len(decode_frames(path)) < N_FRAMES
 
 
-def test_sampled_frames_are_downscaled_to_draft_size(tmp_path):
+def test_sampled_frames_are_downscaled_to_min_decode_edge(tmp_path):
     video = write_video(tmp_path / "v.mp4", [RED, GREEN], size=(64, 32))
     gif = tmp_path / "g.gif"
     frames = [Image.new("RGB", (64, 32), c) for c in ("red", "green")]
     frames[0].save(gif, save_all=True, append_images=frames[1:])
-    assert {f.size for f in decode_frames(video, draft_size=16)} == {(32, 16)}
-    assert {f.size for f in decode_frames(str(gif), draft_size=16)} == {(32, 16)}
+    assert {f.size for f in decode_frames(video, lambda w, h: h // 2)} == {(32, 16)}
+    assert {f.size for f in decode_frames(str(gif), lambda w, h: h // 2)} == {(32, 16)}
 
 
 class _CaptureProxy:
@@ -118,6 +118,8 @@ def test_embed_prepared_batch_chunks_by_max_batch():
     calls = []
 
     class FakeModel:
+        config = SimpleNamespace(model_type="siglip")
+
         def get_image_features(self, pixel_values, return_dict):
             calls.append(len(pixel_values))
             return SimpleNamespace(pooler_output=pixel_values)
@@ -132,6 +134,8 @@ def test_extract_features_keeps_frame_batches_within_file_batch_size(tmp_path):
     sizes = []
 
     class FakeModel:
+        config = SimpleNamespace(model_type="siglip")
+
         def get_image_features(self, pixel_values, return_dict):
             sizes.append(len(pixel_values))
             return SimpleNamespace(pooler_output=pixel_values)

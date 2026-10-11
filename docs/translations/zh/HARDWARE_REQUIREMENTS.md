@@ -9,6 +9,11 @@
 
 ### 视觉嵌入模型
 
+- **google/embeddinggemma-2:**
+  - **显存 (VRAM):** +1.0 GB
+  - **内存 (RAM):** +2 GB
+  - **存储空间:** +1.53 GB
+
 - **google/siglip2-so400m-patch14-384:**
   - **显存 (VRAM):** +2.1 GB
   - **内存 (RAM):** +4 GB
