@@ -63,7 +63,7 @@ from index_store import (
 )
 from model_utils import N_FRAMES, load_model_and_processor, probe_batch_size
 
-__version__ = "1.7.0"
+__version__ = "1.8.0"
 
 # --- Configuration ---
 AVAILABLE_MODELS = [
