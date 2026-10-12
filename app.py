@@ -213,8 +213,8 @@ def text_threshold_slider(value: float, has_logits: bool = True, visible: bool =
             step=0.1,
             value=value,
             visible=visible,
-            label="Logit Confidence Threshold (SigLIP)",
-            info="SigLIP model confidence. Higher values = more confident.",
+            label="Text Search Threshold (Logit)",
+            info="Minimum logit for text-only search. Higher = fewer, closer matches.",
         )
     return gr.Slider(
         minimum=0.0,
@@ -222,8 +222,8 @@ def text_threshold_slider(value: float, has_logits: bool = True, visible: bool =
         step=0.01,
         value=value,
         visible=visible,
-        label="Cosine Similarity Threshold (Text Only)",
-        info="For text search (text input only). Higher values = more confident.",
+        label="Text Search Threshold",
+        info="Minimum similarity for text-only search. Higher = fewer, closer matches.",
     )
 
 
@@ -1763,14 +1763,14 @@ if __name__ == "__main__":
                     value=DEFAULT_SOFT_TOKENS,
                     visible=False,
                     label="Image Detail (soft tokens)",
-                    info="Higher sees finer detail but indexes slower. Each value has its own index.",
+                    info="Higher values see finer detail but index slower. Each value keeps its own index.",
                 )
                 with gr.Accordion("Database Management", open=False):
                     active_folder_dropdown = gr.Dropdown(
-                        label="Active Folder",
+                        label="Folder to Search",
                         choices=["All"],
                         value="All",
-                        info="Limit searches to a specific indexed folder.",
+                        info="Search one indexed folder, or all of them.",
                     )
                     # Newline-separated folder paths; parsed by handlers as the folder list.
                     indexed_folders_state = gr.State("")
@@ -1789,19 +1789,19 @@ if __name__ == "__main__":
                         label="Remove Folder",
                         choices=[NO_FOLDER_CHOICE],
                         value="",
-                        info="Removes the folder from the index; files on disk are untouched.",
+                        info="Remove a folder from the index. Files on disk are untouched.",
                     )
                     delete_folder_button = gr.Button(
-                        "Delete Folder", variant="stop", min_width=50
+                        "Remove Folder", variant="stop", min_width=50
                     )
 
                 gr.Markdown("### Find Duplicates")
                 with gr.Accordion("Find Duplicates", open=False):
                     duplicate_folder_dropdown = gr.Dropdown(
-                        label="Select Indexed Folder to Scan",
+                        label="Folder to Scan",
                         choices=["All"],
                         value="All",
-                        info="Scan all indexed folders or select one folder.",
+                        info="Scan one indexed folder, or all of them.",
                     )
                     duplicate_threshold_slider = gr.Slider(
                         minimum=0.0,
@@ -1809,12 +1809,12 @@ if __name__ == "__main__":
                         step=0.01,
                         value=FALLBACK_DUPLICATE_THRESHOLD,
                         label="Similarity Threshold",
-                        info="Cosine similarity threshold for reporting duplicates. Higher = more strict.",
+                        info="Minimum similarity for a pair to count as duplicates. Higher = fewer, closer pairs.",
                     )
                     show_dismissed_checkbox = gr.Checkbox(
                         label="Show Pairs Marked Not Duplicates",
                         value=False,
-                        info="Include them in the next scan so they can be restored.",
+                        info="Include dismissed pairs in the next scan so they can be restored.",
                     )
                     find_duplicates_button = gr.Button(
                         "Find Duplicates", variant="primary"
@@ -1827,8 +1827,8 @@ if __name__ == "__main__":
                         maximum=500,
                         step=1,
                         value=INITIAL_N_RESULTS,
-                        label="Initial N Results (Max Images)",
-                        info="Images to fetch from DB before applying confidence thresholds.",
+                        label="Max Results",
+                        info="Fetches this many nearest matches, then filters them by the thresholds.",
                     )
                     siglip_thresh_slider = text_threshold_slider(
                         FALLBACK_SIGLIP_THRESHOLD, visible=False
@@ -1838,39 +1838,39 @@ if __name__ == "__main__":
                         maximum=1.0,
                         step=0.01,
                         value=FALLBACK_IMAGE_ONLY_THRESHOLD,
-                        label="Cosine Similarity Threshold (Image Only)",
-                        info="For reverse image search (image input only). Higher values = more confident.",
+                        label="Image Search Threshold",
+                        info="Minimum similarity for image-only search. Higher = fewer, closer matches.",
                     )
                     combined_cosine_thresh_slider = gr.Slider(
                         minimum=0.0,
                         maximum=1.0,
                         step=0.01,
                         value=FALLBACK_COMBINED_THRESHOLD,
-                        label="Cosine Similarity Threshold (Combined)",
-                        info="For text + image search. Higher values = more confident.",
+                        label="Combined Search Threshold",
+                        info="Minimum average of text and image similarity. Higher = fewer, closer matches.",
                     )
                     batch_size_slider = gr.Slider(
                         minimum=4,
                         maximum=256,
                         step=4,
                         value=DEFAULT_BATCH_SIZE,
-                        label="Processing Batch Size",
-                        info="Images to process in one batch during add/update. Higher = more memory usage.",
+                        label="Batch Size",
+                        info="Images embedded per batch while indexing. Reset to fit GPU memory when a model loads.",
                     )
                     live_search_checkbox = gr.Checkbox(
                         value=False,
-                        label="Search as You Type",
-                        info="Update results while typing a text query. With an image in the query, press Enter instead.",
+                        label="Live Search",
+                        info="Update results while typing a text query (no image input).",
                     )
                     show_scores_checkbox = gr.Checkbox(
                         value=False,
-                        label="Show Scores in Captions",
-                        info="Append each result's score to its caption.",
+                        label="Show Scores",
+                        info="Add each result's score to its caption, for tuning the thresholds.",
                     )
                     verbose_checkbox = gr.Checkbox(
                         value=False,
                         label="Verbose Logging",
-                        info="Show detailed confidence scores and similarity metrics in console output.",
+                        info="Print per-result scores and similarity details to the console.",
                     )
 
             with gr.Column(scale=3):

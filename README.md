@@ -51,16 +51,16 @@ An offline visual search engine for local image and video collections. Indexes d
 - **Web UI:** In Database Management, enter a directory path and click Add Folder.
 - **CLI:**
   ```bash
-  python build_db.py --model_path "google/siglip2-so400m-patch16-512" --db_path "img_db/siglip2_so400m" --add "path/to/images"
+  python build_db.py --model_path "google/embeddinggemma-2" --db_path "img_db/embeddinggemma_2" --add "path/to/images"
   ```
 - **Sync Changes:** Click Update/Sync in the Web UI, or pass `--update` via CLI to rescan indexed folders for additions or deletions.
-- **Image Detail (EmbeddingGemma 2):** Pick 70 to 1120 soft tokens under Select Model (default 280). Higher values see finer detail but index slower, and each value keeps its own index. Via CLI, pass `--max_soft_tokens 140` with a matching `--db_path` such as `img_db/embeddinggemma_2_140`.
+- **Image Detail (EmbeddingGemma 2):** Pick an Image Detail level from 70 to 1120 soft tokens below Select Model (default 280). Higher values see finer detail but index slower. Each value keeps its own index, so add your folders again after changing it. Via CLI, add `--max_soft_tokens 140` with a matching `--db_path` such as `img_db/embeddinggemma_2_140`.
 
 ### 3. Search
 
-- **Text Search:** Enter a description (e.g., "an orange and black butterfly") to retrieve matching media ranked by similarity.
+- **Text Search:** Enter a description (e.g., "a monarch butterfly") to retrieve matching media ranked by similarity. Enable Live Search in Advanced Parameters to update results as you type.
 - **Reverse Image Search:** Upload an image to find visually similar files, or combine text and image inputs to refine results.
-- **Find Duplicates:** In the Find Duplicates tab, select an indexed folder and set a similarity threshold to surface duplicate pairs.
+- **Find Duplicates:** In Find Duplicates, choose a Folder to Scan and set the Similarity Threshold, then review the pairs in the Duplicate Inspector tab.
 - **Access Restriction (Optional):** By default, the Gradio gallery can display images from any indexed directory. Set `LOCALLENS_ALLOWED_PATHS` in your environment to restrict accessible directories.
 
 ---

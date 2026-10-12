@@ -51,16 +51,16 @@
 - **Web UI：** 在 Database Management 中输入目录路径，然后点击 Add Folder。
 - **CLI：**
   ```bash
-  python build_db.py --model_path "google/siglip2-so400m-patch16-512" --db_path "img_db/siglip2_so400m" --add "path/to/images"
+  python build_db.py --model_path "google/embeddinggemma-2" --db_path "img_db/embeddinggemma_2" --add "path/to/images"
   ```
 - **同步更改：** 在 Web UI 中点击 Update/Sync，或在命令行中传入 `--update`，重新扫描已索引文件夹中的新增或删除内容。
-- **图像细节（EmbeddingGemma 2）：** 在 Select Model 下方选择 70 到 1120 个软令牌（默认 280）。数值越高，识别的细节越精细，但索引越慢，且每个数值使用独立的索引。在命令行中传入 `--max_soft_tokens 140`，并搭配相应的 `--db_path`，例如 `img_db/embeddinggemma_2_140`。
+- **图像细节（EmbeddingGemma 2）：** 在 Select Model 下方的 Image Detail 中选择 70 到 1120 个软令牌（默认 280）。数值越高，识别的细节越精细，但索引越慢。每个数值使用独立的索引，因此更改后需要重新添加文件夹。在命令行中加上 `--max_soft_tokens 140`，并搭配相应的 `--db_path`，例如 `img_db/embeddinggemma_2_140`。
 
 ### 3. 搜索
 
-- **文本搜索：** 输入描述（例如 "an orange and black butterfly"）即可按相似度排序检索匹配的媒体。
+- **文本搜索：** 输入描述（例如 "a monarch butterfly"）即可按相似度排序检索匹配的媒体。在 Advanced Parameters 中启用 Live Search，即可在输入时实时更新结果。
 - **以图搜图：** 上传图像以查找视觉上相似的文件，或结合文本与图像输入精细调整搜索结果。
-- **查找重复项：** 在 Find Duplicates 选项卡中选择已索引的文件夹并设置相似度阈值，以找出重复的图像与视频对。
+- **查找重复项：** 在 Find Duplicates 中选择 Folder to Scan 并设置 Similarity Threshold，然后在 Duplicate Inspector 选项卡中查看重复的图像与视频对。
 - **访问限制（可选）：** 默认情况下，Gradio 相册可以显示来自任何已索引目录的图像。在启动应用前于系统环境中设置 `LOCALLENS_ALLOWED_PATHS` 即可限制允许访问的目录。
 
 ---
