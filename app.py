@@ -150,6 +150,9 @@ MODEL_CONFIDENCE_DEFAULTS = {
 DB_ROOT = "img_db"
 # Upper bound; probe_batch_size lowers it when the model's batches won't fit in VRAM.
 DEFAULT_BATCH_SIZE = 16
+# EmbeddingGemma 2 on CUDA keeps getting faster past the default (measured up to 64):
+# larger batches amortize the forward pass's per-call CPU work.
+SOFT_TOKEN_MAX_BATCH_SIZE = 64
 
 device = get_best_device()
 dtype = get_best_dtype(device)
@@ -353,8 +356,13 @@ def load_and_switch_model_db(
             except Exception as e:
                 print(f"Error creating indexed folders file: {e}")
         progress(0.5, desc="Sizing batches to available memory...")
+        # Other devices get the bound itself, so they keep the default.
+        raise_bound = has_soft_tokens and device.type == "cuda"
         ui_batch_size_to_set = probe_batch_size(
-            new_model, new_processor, device, DEFAULT_BATCH_SIZE
+            new_model,
+            new_processor,
+            device,
+            SOFT_TOKEN_MAX_BATCH_SIZE if raise_bound else DEFAULT_BATCH_SIZE,
         )
         progress(0.6, desc="Calculating params...")
         new_logit_scale_exp_val = (

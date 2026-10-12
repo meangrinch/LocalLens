@@ -371,10 +371,13 @@ def probe_batch_size(model, processor, device, max_batch_size: int) -> int:
         [Image.new("RGB", (1024, 1024))] * probe_size, processor
     )
     torch.cuda.synchronize(device)
+    torch.cuda.empty_cache()
     torch.cuda.reset_peak_memory_stats(device)
-    baseline = torch.cuda.memory_allocated(device)
+    # Reserved, not allocated: the allocator holds up to 1.6x what the tensors use, and
+    # that is what has to fit on the card.
+    baseline = torch.cuda.memory_reserved(device)
     embed_prepared_batch(inputs, model, device)
-    per_image = (torch.cuda.max_memory_allocated(device) - baseline) / probe_size
+    per_image = (torch.cuda.max_memory_reserved(device) - baseline) / probe_size
     torch.cuda.empty_cache()
     free_bytes, _ = torch.cuda.mem_get_info(device)
     return fit_batch_size(free_bytes, per_image, max_batch_size)
