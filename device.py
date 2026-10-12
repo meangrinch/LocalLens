@@ -21,14 +21,7 @@ def get_best_device() -> torch.device:
 
 
 def get_best_dtype(device: Optional[torch.device] = None) -> torch.dtype:
-    """Return the optimal dtype for the given device.
-
-    Args:
-        device: The target device. If None, uses get_best_device().
-
-    Returns:
-        torch.dtype: bfloat16/float16 for GPU, float32 for CPU.
-    """
+    """Return the device's best dtype: bfloat16/float16 on GPU, float32 on CPU."""
     if device is None:
         device = get_best_device()
 

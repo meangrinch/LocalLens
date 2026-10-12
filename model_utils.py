@@ -22,8 +22,8 @@ TRUST_REMOTE_MODEL_CODE = True
 # Decode JPEGs to at least this multiple of the model input size. Measured drift vs a
 # full decode: worst-case cosine ~0.998, while 1x drifted to ~0.984 on SigLIP2 so400m.
 JPEG_DRAFT_MARGIN = 2
-# Share of free VRAM indexing batches may use; the rest absorbs fragmentation, text
-# embedding during searches, and other GPU apps.
+# Share of free VRAM indexing batches may use; the rest absorbs text embedding during
+# searches and other GPU apps.
 VRAM_BUDGET_FRACTION = 0.7
 # Most frames sampled, evenly spaced, from each video or animated image.
 N_FRAMES = 8
@@ -51,10 +51,8 @@ def load_model_and_processor(
     max_soft_tokens: int | None = None,
 ):
     """
-    Loads the appropriate model and processor using Auto classes.
     max_soft_tokens sets the image detail of models that have one (EmbeddingGemma 2);
     other models ignore it.
-    Returns: (model, processor)
     """
     print(f"Loading model: {model_path}...")
 
@@ -170,7 +168,6 @@ def _read_video_frames(path: str, indices: list[int] | None) -> list[np.ndarray]
 
 
 def _extract_video_frames(path: str) -> list[Image.Image]:
-    """Samples up to N_FRAMES evenly spaced frames, skipping any that fail to decode."""
     cap = cv2.VideoCapture(path)
     frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) if cap.isOpened() else 0
     cap.release()
@@ -389,10 +386,6 @@ def extract_features(
     processor,
     device: torch.device | str,
 ):
-    """
-    Extracts features for a batch.
-    Handles variable resolutions (NaFlex) via padding.
-    """
     inputs, valid_paths = prepare_image_batch(image_paths_batch, processor)
     if inputs is None:
         return _empty_features(device), []
