@@ -258,6 +258,26 @@ def read_indexed_folders(db_path: str) -> list[str]:
     return folders
 
 
+def track_model_download(progress: gr.Progress) -> None:
+    """Lets Gradio's tqdm tracking follow huggingface_hub's Xet downloads, one bar per file.
+
+    hf_xet reports progress from its own threads, where Gradio finds no request context
+    and drops the update. It also opens a second bar per file, for network bytes.
+    """
+    send = progress._progress_callback()
+    progress._progress_callback = lambda: send
+    track = progress.tqdm
+
+    def tqdm(iterable, desc=None, total=None, unit="steps", _tqdm=None):
+        if _tqdm is not None and str(desc).endswith(": downloading bytes"):
+            # Detached, or its updates would be added to the bar that is kept.
+            _tqdm._progress = None
+            return None
+        return track(iterable, desc, total, unit, _tqdm=_tqdm)
+
+    progress.tqdm = tqdm
+
+
 def load_and_switch_model_db(
     selected_model_path: str,
     soft_tokens: int = DEFAULT_SOFT_TOKENS,
@@ -303,6 +323,7 @@ def load_and_switch_model_db(
         return
 
     progress(0, desc="Starting model...")
+    track_model_download(progress)
     ui_siglip_thresh_to_set = FALLBACK_SIGLIP_THRESHOLD
     ui_combined_thresh_to_set = FALLBACK_COMBINED_THRESHOLD
     ui_image_only_thresh_to_set = FALLBACK_IMAGE_ONLY_THRESHOLD
