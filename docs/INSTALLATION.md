@@ -7,7 +7,7 @@ Download from [Releases](https://github.com/meangrinch/LocalLens/releases/tag/po
 ### Requirements
 
 - **Windows:** Python and Git are bundled; no additional dependencies required.
-- **Linux/macOS:** Python 3.10+ and Git must be installed on your system.
+- **Linux/macOS:** Python 3.11+ and Git must be installed on your system.
 
 ### Updating
 
@@ -47,16 +47,19 @@ Install the PyTorch build for your system (see [PyTorch Install](https://pytorch
 
 ```bash
 # NVIDIA CUDA 13.0
-pip install torch==2.12.0+cu130 torchvision==0.27.0+cu130 --extra-index-url https://download.pytorch.org/whl/cu130
+pip install torch==2.14.1+cu130 torchvision==0.29.1+cu130 --extra-index-url https://download.pytorch.org/whl/cu130
 
-# AMD ROCm 7.1
-pip install torch==2.12.0+rocm7.1 torchvision==0.27.0+rocm7.1 --extra-index-url https://download.pytorch.org/whl/rocm7.1
+# AMD ROCm 7.2 (Linux)
+pip install torch==2.14.1+rocm7.2 torchvision==0.29.1+rocm7.2 --extra-index-url https://download.pytorch.org/whl/rocm7.2
+
+# AMD ROCm 10.1 (Windows)
+pip install --index-url https://stable.repo.amd.com/rocm/whl-next/ "torch[device-all]==2.14.0+rocm10.1.0" "torchvision[device-all]==0.29.0a0+rocm10.1.0"
 
 # Intel XPU
-pip install torch==2.12.0+xpu torchvision==0.27.0+xpu --extra-index-url https://download.pytorch.org/whl/xpu
+pip install torch==2.14.1+xpu torchvision==0.29.1+xpu --extra-index-url https://download.pytorch.org/whl/xpu
 
 # Apple Silicon (MPS) / CPU
-pip install torch==2.12.0 torchvision==0.27.0
+pip install torch==2.14.1 torchvision==0.29.1
 ```
 
 ### 4. Install Dependencies

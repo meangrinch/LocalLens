@@ -12,7 +12,7 @@
   <img src="https://img.shields.io/github/v/release/meangrinch/LocalLens?label=Release&labelColor=181717&color=0877d2" />
   <img src="https://img.shields.io/github/downloads/meangrinch/LocalLens/total?label=Downloads&labelColor=181717&color=0877d2" />
   <img src="https://img.shields.io/github/license/meangrinch/LocalLens?labelColor=181717&color=2ea44f" />
-  <img src="https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white&labelColor=181717" />
+  <img src="https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white&labelColor=181717" />
 </p>
 
 <div align="center">
@@ -33,14 +33,14 @@ An offline visual search engine for local image and video collections. Indexes d
 
 - **Portable Package (Recommended):** Download the portable build from [Releases](https://github.com/meangrinch/LocalLens/releases/tag/portable).
   - Windows: No requirements.
-  - Linux / macOS: Requires Python 3.10+ and Git.
+  - Linux / macOS: Requires Python 3.11+ and Git.
 - **From Source:**
   ```bash
   git clone https://github.com/meangrinch/LocalLens.git
   cd LocalLens
   python -m venv venv
   .\venv\Scripts\activate # or source venv/bin/activate (Linux/macOS)
-  pip install torch==2.12.0+cu130 torchvision==0.27.0+cu130 --extra-index-url https://download.pytorch.org/whl/cu130 # or pip install torch==2.12.0 torchvision==0.27.0 (macOS)
+  pip install torch==2.14.1+cu130 torchvision==0.29.1+cu130 --extra-index-url https://download.pytorch.org/whl/cu130 # or pip install torch==2.14.1 torchvision==0.29.1 (macOS)
   pip install -r requirements.txt
   ```
 
