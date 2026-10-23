@@ -1662,20 +1662,20 @@ def handle_reveal_duplicate(side: int, current_idx: int, pairs: list):
         handle_reveal(pairs[current_idx][side])
 
 
-css_path = Path(__file__).with_name("style.css")
-logo_path = Path(__file__).with_name("assets") / "logo.png"
-favicon_path = Path(__file__).with_name("assets") / "icon-192.png"
+CSS_PATH = Path(__file__).with_name("style.css")
+APP_ICON_PATH = Path(__file__).with_name("assets") / "icon.png"
+FAVICON_PATH = APP_ICON_PATH.with_name("icon-192.png")
 
 
 def get_app_header_html() -> str:
     # Embed a small copy so the page doesn't pull the full 1024px logo for a 42px header icon.
     buf = io.BytesIO()
-    Image.open(logo_path).resize((128, 128), Image.Resampling.LANCZOS).save(
+    Image.open(APP_ICON_PATH).resize((128, 128), Image.Resampling.LANCZOS).save(
         buf, format="PNG"
     )
     data_uri = f"data:image/png;base64,{base64.b64encode(buf.getvalue()).decode()}"
     return (
-        f'<div class="locallens-header"><img src="{data_uri}" alt="LocalLens logo" class="locallens-logo" />'
+        f'<div class="locallens-header"><img src="{data_uri}" alt="LocalLens Icon" class="locallens-logo" />'
         '<h1 class="locallens-title">LocalLens</h1></div>'
     )
 
@@ -2341,6 +2341,6 @@ if __name__ == "__main__":
         ),
         head='<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Sans+Pro:wght@400;600&display=swap">',
         js=js_credits,
-        css_paths=str(css_path),
-        favicon_path=str(favicon_path),
+        css_paths=str(CSS_PATH),
+        favicon_path=str(FAVICON_PATH),
     )
