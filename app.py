@@ -73,7 +73,7 @@ from model_utils import (
     text_features,
 )
 
-__version__ = "1.8.0"
+__version__ = "1.8.1"
 
 AVAILABLE_MODELS = [
     "google/embeddinggemma-2",
