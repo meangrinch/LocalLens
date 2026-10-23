@@ -27,7 +27,7 @@ def test_image_search_returns_each_video_once(tmp_path, monkeypatch):
             pooler_output=torch.tensor([[1.0, 0.0]])
         ),
     )
-    processor = lambda **_: SimpleNamespace(to=lambda _device: {})  # noqa: E731
+    processor = lambda **_: SimpleNamespace(to=lambda _device: {})
 
     results = search(
         "", object(), 50, 0.0, 0.5, 0.5, model, processor,
@@ -66,7 +66,7 @@ def test_search_fetches_requested_number_of_files_not_frames(tmp_path, monkeypat
             pooler_output=torch.tensor([[1.0, 0.0]])
         ),
     )
-    processor = lambda **_: SimpleNamespace(to=lambda _device: {})  # noqa: E731
+    processor = lambda **_: SimpleNamespace(to=lambda _device: {})
     client = SimpleNamespace(get_collection=lambda _: SimpleNamespace(query=query))
 
     results = search(

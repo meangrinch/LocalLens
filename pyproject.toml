@@ -25,6 +25,13 @@ target-version = "py311"
 
 [tool.ruff.lint]
 extend-select = ["I"]
+# Broad excepts are deliberate at UI and batch boundaries: errors surface as
+# Gradio warnings or skip one batch instead of crashing the app or the sync.
+ignore = ["BLE001"]
+
+[tool.ruff.lint.flake8-bugbear]
+# Gradio injects progress tracking through this default argument.
+extend-immutable-calls = ["gradio.Progress"]
 
 [tool.setuptools]
 py-modules = [

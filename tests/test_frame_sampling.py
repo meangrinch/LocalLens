@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from typing import ClassVar
 
 import cv2
 import numpy as np
@@ -52,7 +53,8 @@ def test_gif_frame_counts(tmp_path):
 
 def test_truncated_gif_keeps_frames_that_decoded(tmp_path):
     path = write_gif(tmp_path / "t.gif", ["red", "green", "blue", "white"] * 2)
-    data = open(path, "rb").read()
+    with open(path, "rb") as handle:
+        data = handle.read()
     with open(path, "wb") as handle:
         handle.write(data[: len(data) * 3 // 4])
     assert 1 <= len(decode_frames(path)) < N_FRAMES
@@ -141,7 +143,7 @@ def test_extract_features_keeps_frame_batches_within_file_batch_size(tmp_path):
             return SimpleNamespace(pooler_output=pixel_values)
 
     class FakeImageProcessor:
-        size = {}
+        size: ClassVar[dict] = {}
 
     class FakeProcessor:
         image_processor = FakeImageProcessor()

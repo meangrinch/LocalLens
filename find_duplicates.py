@@ -1,5 +1,4 @@
 import os
-from typing import List, Tuple
 
 import numpy as np
 import torch
@@ -17,7 +16,7 @@ from model_utils import extract_features, frame_distinct_threshold
 
 
 def fetch_embeddings_from_db(
-    collection, media_ids: List[str], batch_size: int = 1000
+    collection, media_ids: list[str], batch_size: int = 1000
 ) -> dict:
     """Fetch each media's frame embeddings (rows ordered by frame) from ChromaDB."""
     frames: dict = {}
@@ -42,18 +41,18 @@ def fetch_embeddings_from_db(
 
 
 def compute_embeddings(
-    image_paths: List[str],
+    image_paths: list[str],
     model,
     processor,
     device: torch.device | str,
     batch_size: int,
-) -> Tuple[np.ndarray, List[str]]:
+) -> tuple[np.ndarray, list[str]]:
     """Compute normalized embeddings in batches; returns one row and path per frame."""
     if not image_paths:
         return np.empty((0, 0), dtype=np.float32), []
 
-    all_embeddings: List[np.ndarray] = []
-    all_paths: List[str] = []
+    all_embeddings: list[np.ndarray] = []
+    all_paths: list[str] = []
 
     total = len(image_paths)
     for batch_index in range(0, total, batch_size):
@@ -82,12 +81,12 @@ def compute_embeddings(
 
 def find_similar_pairs(
     embeddings: np.ndarray,
-    owners: List[str],
+    owners: list[str],
     threshold: float,
     block_size: int = 1024,
     device: torch.device | str = "cpu",
     col_block_size: int = 16384,
-) -> List[Tuple[float, str, str]]:
+) -> list[tuple[float, str, str]]:
     """Find file pairs whose frames match with a containment score >= threshold.
 
     `embeddings` holds one L2-normalized row per frame and `owners` the file of each
@@ -134,7 +133,7 @@ def find_similar_pairs(
     # batches if libraries with thousands of such videos get slow.
     frames_np = E.cpu().numpy()
     frames_of = {f: frames_np[rows] for f, rows in rows_of.items()}
-    results: List[Tuple[float, str, str]] = []
+    results: list[tuple[float, str, str]] = []
     for a, b in candidates:
         sims = frames_of[a] @ frames_of[b].T
         score = float(max(sims.max(axis=1).mean(), sims.max(axis=0).mean()))
@@ -155,7 +154,7 @@ def find_duplicates_in_folder(
     active_chroma_client,
     db_path: str,
     device: torch.device | str,
-) -> List[Tuple[float, str, str]]:
+) -> list[tuple[float, str, str]]:
     """Find duplicate pairs in a folder using the active model and ChromaDB."""
     return find_duplicates_in_folders(
         folder_paths=[folder_path],
@@ -171,7 +170,7 @@ def find_duplicates_in_folder(
 
 
 def find_duplicates_in_folders(
-    folder_paths: List[str],
+    folder_paths: list[str],
     threshold: float,
     batch_size: int,
     block_size: int,
@@ -180,7 +179,7 @@ def find_duplicates_in_folders(
     active_chroma_client,
     db_path: str,
     device: torch.device | str,
-) -> List[Tuple[float, str, str]]:
+) -> list[tuple[float, str, str]]:
     """Find duplicate pairs across one or more folders."""
     directories = [
         canonical_path(folder_path)

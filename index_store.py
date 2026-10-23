@@ -6,10 +6,10 @@ import sqlite3
 import subprocess
 import sys
 import time
-from contextlib import contextmanager
+from collections.abc import Iterable
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import PurePosixPath
-from typing import Iterable
 
 import cv2
 import numpy as np
@@ -868,7 +868,7 @@ def get_media_file_info(
 
     dimensions = None
     dim_str = "Unknown"
-    try:
+    with suppress(Exception):
         if media_type_for_path(canonical) == "video":
             cap = cv2.VideoCapture(canonical)
             w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -880,8 +880,6 @@ def get_media_file_info(
         if w and h:
             dimensions = (w, h)
             dim_str = f"{w} × {h}"
-    except Exception:
-        pass
 
     return {
         "path": canonical,
@@ -960,7 +958,7 @@ def reveal_in_file_manager(path: str) -> bool:
         except OSError:
             return False
     try:
-        result = subprocess.run(command, capture_output=True, timeout=15)
+        result = subprocess.run(command, capture_output=True, timeout=15, check=False)
         # NoReply: a cold-started file manager missed the reply timeout but still
         # handles the call, so opening the folder too would show two windows.
         if result.returncode == 0 or b"NoReply" in result.stderr:

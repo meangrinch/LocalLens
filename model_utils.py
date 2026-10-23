@@ -9,7 +9,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from huggingface_hub import constants as hf_constants
-from PIL import Image, ImageOps, UnidentifiedImageError
+from PIL import Image, ImageOps
 from transformers import AutoConfig, AutoModel, AutoProcessor
 
 from index_store import FRAME_DISTINCT_THRESHOLD
@@ -151,7 +151,7 @@ def _read_video_frames(path: str, indices: list[int] | None) -> list[np.ndarray]
     """Reads the given frame indices, or just the first frame when indices is None."""
     cap = cv2.VideoCapture(path)
     if not cap.isOpened():
-        raise IOError(f"Cannot open video: {path}")
+        raise OSError(f"Cannot open video: {path}")
     try:
         if indices is None:
             ok, frame = cap.read()
@@ -178,7 +178,7 @@ def _extract_video_frames(path: str) -> list[Image.Image]:
         # Frame count unknown (common for WebM) or every seek failed.
         frames = _read_video_frames(path, None)
     if not frames:
-        raise IOError(f"Could not read frame from video: {path}")
+        raise OSError(f"Could not read frame from video: {path}")
     return [Image.fromarray(cv2.cvtColor(f, cv2.COLOR_BGR2RGB)) for f in frames]
 
 
@@ -259,7 +259,7 @@ def _load_and_convert_image(
 ) -> tuple[list[Image.Image], str | None, str | None]:
     try:
         return decode_frames(path, min_edge_for), path, None
-    except (FileNotFoundError, UnidentifiedImageError, IOError, Exception) as e:
+    except Exception as e:
         return [], None, f"Warning: Error processing {path}: {e}"
 
 

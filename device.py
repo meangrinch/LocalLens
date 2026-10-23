@@ -1,4 +1,4 @@
-from typing import Optional
+import contextlib
 
 import torch
 
@@ -20,7 +20,7 @@ def get_best_device() -> torch.device:
     return torch.device("cpu")
 
 
-def get_best_dtype(device: Optional[torch.device] = None) -> torch.dtype:
+def get_best_dtype(device: torch.device | None = None) -> torch.dtype:
     """Return the device's best dtype: bfloat16/float16 on GPU, float32 on CPU."""
     if device is None:
         device = get_best_device()
@@ -33,14 +33,12 @@ def get_best_dtype(device: Optional[torch.device] = None) -> torch.dtype:
         return torch.float16
 
     if device_type == "xpu":
-        try:
+        with contextlib.suppress(Exception):
             if (
                 hasattr(torch.xpu, "is_bf16_supported")
                 and torch.xpu.is_bf16_supported()
             ):
                 return torch.bfloat16
-        except Exception:
-            pass
         return torch.float16
 
     if device_type == "mps":

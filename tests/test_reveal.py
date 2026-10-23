@@ -1,5 +1,6 @@
 import subprocess
 import sys
+from typing import ClassVar
 
 from index_store import reveal_command, reveal_in_file_manager
 
@@ -12,7 +13,7 @@ def test_reveal_command_per_platform():
 
 
 class FakePopen:
-    launched = []
+    launched: ClassVar[list] = []
     exit_code = 0
 
     def __init__(self, command):

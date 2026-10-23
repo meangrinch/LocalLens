@@ -870,7 +870,7 @@ def handle_trash_duplicate(
             *render_duplicate_pair_view([], 0, indexed_folders_text),
         )
 
-    sim, path_a, path_b = pairs[current_idx]
+    _sim, path_a, path_b = pairs[current_idx]
     folders = (
         parse_indexed_folders_text(indexed_folders_text) if indexed_folders_text else []
     )
@@ -1873,98 +1873,98 @@ if __name__ == "__main__":
                         info="Print per-result scores and similarity details to the console.",
                     )
 
-            with gr.Column(scale=3):
-                with gr.Tabs(
+            with (
+                gr.Column(scale=3),
+                gr.Tabs(
                     selected="tab_search",
                     elem_id="main_tabs",
                     elem_classes=["hide-tabs-nav"],
-                ) as main_tabs:
-                    with gr.Tab("Search Results", id="tab_search"):
-                        results_gallery = gr.Gallery(
-                            label="Search Results",
-                            columns=3,
-                            fit_columns=False,
-                            show_label=False,
-                            elem_id="gallery",
-                            interactive=False,
-                        )
-                        reveal_result_btn = gr.Button(
-                            "Show in Folder", visible=False, min_width=50
-                        )
+                ) as main_tabs,
+            ):
+                with gr.Tab("Search Results", id="tab_search"):
+                    results_gallery = gr.Gallery(
+                        label="Search Results",
+                        columns=3,
+                        fit_columns=False,
+                        show_label=False,
+                        elem_id="gallery",
+                        interactive=False,
+                    )
+                    reveal_result_btn = gr.Button(
+                        "Show in Folder", visible=False, min_width=50
+                    )
 
-                    with gr.Tab(
+                with (
+                    gr.Tab(
                         "Duplicate Inspector", id="tab_duplicates"
-                    ) as duplicates_tab:
-                        with gr.Column(visible=False) as duplicate_inspector_group:
-                            with gr.Row(elem_classes=["dup-nav-row"]):
-                                prev_pair_btn = gr.Button("Previous Pair", min_width=50)
-                                with gr.Column(elem_classes=["dup-pair-center"]):
-                                    pair_status_markdown = gr.Markdown(
-                                        "Pair 0 of 0", elem_id="dup_status"
-                                    )
-                                    dismiss_pair_btn = gr.Button(
-                                        "Not Duplicates",
-                                        size="sm",
-                                        min_width=50,
-                                        elem_id="dup_dismiss",
-                                    )
-                                next_pair_btn = gr.Button("Next Pair", min_width=50)
+                    ) as duplicates_tab,
+                    gr.Column(visible=False) as duplicate_inspector_group,
+                ):
+                    with gr.Row(elem_classes=["dup-nav-row"]):
+                        prev_pair_btn = gr.Button("Previous Pair", min_width=50)
+                        with gr.Column(elem_classes=["dup-pair-center"]):
+                            pair_status_markdown = gr.Markdown(
+                                "Pair 0 of 0", elem_id="dup_status"
+                            )
+                            dismiss_pair_btn = gr.Button(
+                                "Not Duplicates",
+                                size="sm",
+                                min_width=50,
+                                elem_id="dup_dismiss",
+                            )
+                        next_pair_btn = gr.Button("Next Pair", min_width=50)
 
-                            with gr.Row():
-                                with gr.Column():
-                                    with gr.Group():
-                                        img_a_preview = gr.Image(
-                                            label="Image A",
-                                            interactive=False,
-                                            type="filepath",
-                                            show_label=True,
-                                            elem_classes=["dup-preview"],
-                                        )
-                                        vid_a_preview = gr.Video(
-                                            label="Video A",
-                                            interactive=False,
-                                            visible=False,
-                                            elem_classes=["dup-preview"],
-                                        )
-                                        img_a_info_html = gr.HTML(
-                                            padding=False,
-                                            elem_classes=["dup-info-html"],
-                                        )
-                                    reveal_a_btn = gr.Button(
-                                        "Show in Folder", min_width=50
-                                    )
-                                    trash_a_btn = gr.Button(
-                                        "Move to Recycle Bin",
-                                        variant="stop",
-                                        min_width=50,
-                                    )
-                                with gr.Column():
-                                    with gr.Group():
-                                        img_b_preview = gr.Image(
-                                            label="Image B",
-                                            interactive=False,
-                                            type="filepath",
-                                            show_label=True,
-                                            elem_classes=["dup-preview"],
-                                        )
-                                        vid_b_preview = gr.Video(
-                                            label="Video B",
-                                            interactive=False,
-                                            visible=False,
-                                            elem_classes=["dup-preview"],
-                                        )
-                                        img_b_info_html = gr.HTML(
-                                            padding=False,
-                                            elem_classes=["dup-info-html"],
-                                        )
-                                    reveal_b_btn = gr.Button(
-                                        "Show in Folder", min_width=50
-                                    )
-                                    trash_b_btn = gr.Button(
-                                        "Move to Recycle Bin",
-                                        variant="stop",
-                                        min_width=50,
-                                    )
+                    with gr.Row():
+                        with gr.Column():
+                            with gr.Group():
+                                img_a_preview = gr.Image(
+                                    label="Image A",
+                                    interactive=False,
+                                    type="filepath",
+                                    show_label=True,
+                                    elem_classes=["dup-preview"],
+                                )
+                                vid_a_preview = gr.Video(
+                                    label="Video A",
+                                    interactive=False,
+                                    visible=False,
+                                    elem_classes=["dup-preview"],
+                                )
+                                img_a_info_html = gr.HTML(
+                                    padding=False,
+                                    elem_classes=["dup-info-html"],
+                                )
+                            reveal_a_btn = gr.Button("Show in Folder", min_width=50)
+                            trash_a_btn = gr.Button(
+                                "Move to Recycle Bin",
+                                variant="stop",
+                                min_width=50,
+                            )
+                        with gr.Column():
+                            with gr.Group():
+                                img_b_preview = gr.Image(
+                                    label="Image B",
+                                    interactive=False,
+                                    type="filepath",
+                                    show_label=True,
+                                    elem_classes=["dup-preview"],
+                                )
+                                vid_b_preview = gr.Video(
+                                    label="Video B",
+                                    interactive=False,
+                                    visible=False,
+                                    elem_classes=["dup-preview"],
+                                )
+                                img_b_info_html = gr.HTML(
+                                    padding=False,
+                                    elem_classes=["dup-info-html"],
+                                )
+                            reveal_b_btn = gr.Button("Show in Folder", min_width=50)
+                            trash_b_btn = gr.Button(
+                                "Move to Recycle Bin",
+                                variant="stop",
+                                min_width=50,
+                            )
 
         inspector_outputs = [
             duplicate_inspector_group,
@@ -2037,11 +2037,11 @@ if __name__ == "__main__":
             delete_folder_dropdown,
         ]
 
-        refresh_index_summary = dict(
-            fn=render_index_summary,
-            inputs=[active_db_path_state],
-            outputs=[index_summary],
-        )
+        refresh_index_summary = {
+            "fn": render_index_summary,
+            "inputs": [active_db_path_state],
+            "outputs": [index_summary],
+        }
 
         app.load(
             fn=load_and_switch_model_db,
